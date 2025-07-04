@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 OWNER_IDS = []
-owner_ids_str = os.getenv("OWNER_ID", "776883692983156736,829256979716898826"")
+owner_ids_str = os.getenv("OWNER_ID", "776883692983156736,829256979716898826")
 if owner_ids_str:
     for owner_id in owner_ids_str.split(','):
         try:
