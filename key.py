@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 OWNER_IDS = []
-owner_ids_str = os.getenv("OWNER_ID", "776883692983156736")
+owner_ids_str = os.getenv("OWNER_ID", "776883692983156736,829256979716898826")
 if owner_ids_str:
     for owner_id in owner_ids_str.split(','):
         try:
@@ -33,7 +33,7 @@ if owner_ids_str:
             logger.warning(f"Invalid owner ID: {owner_id}")
 
 ROLE_IDS = []
-role_ids_str = os.getenv("ROLE_ID", "")
+role_ids_str = os.getenv("ROLE_ID", "1378078542457344061")
 if role_ids_str:
     for role_id in role_ids_str.split(','):
         try:
