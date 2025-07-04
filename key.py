@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 OWNER_IDS = []
-owner_ids_str = os.getenv("OWNER_ID", "776883692983156736,829256979716898826")
+owner_ids_str = os.getenv("OWNER_ID", "776883692983156736,829256979716898826"")
 if owner_ids_str:
     for owner_id in owner_ids_str.split(','):
         try:
@@ -328,6 +328,44 @@ class LicenseBot(discord.Client):
 
     async def on_error(self, event, *args, **kwargs):
         logger.error(f'Error in {event}: {args}', exc_info=True)
+
+class KeyPanelView(discord.ui.View):
+    def __init__(self, key_type: str):
+        super().__init__(timeout=None)
+        self.key_type = key_type
+
+    @discord.ui.button(label="Manage Your AV License Key", style=discord.ButtonStyle.primary, custom_id="manage_av_key")
+    async def manage_av_key(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await has_key_role(interaction):
+            # Get role name for error message
+            role_name = await storage.get("key_role", "KeyManager")
+            await interaction.response.send_message(f"You don't have the role `{role_name}` required to manage AV keys.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "Select an option to manage your Anime Vanguards license key:",
+            view=KeyOptionsView("AV"),
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Manage Your ASTDS License Key", style=discord.ButtonStyle.primary, custom_id="manage_astds_key")
+    async def manage_astds_key(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await has_key_role(interaction):
+            role_name = await storage.get("key_role", "KeyManager")
+            await interaction.response.send_message(f"You don't have the role `{role_name}` required to manage ASTDS keys.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "Select an option to manage your ASTDS license key:",
+            view=KeyOptionsView("ASTDS"),
+            ephemeral=True
+        )
+
+class KeyOptionsView(discord.ui.View):
+    def __init__(self, key_type: str):
+        super().__init__(timeout=60)
+        self.key_type = key_type
+        self.add_item(discord.ui.Button(label="Generate Key", style=discord.ButtonStyle.primary, custom_id=f"generate_{key_type.lower()}_key"))
+        self.add_item(discord.ui.Button(label="Reset Key", style=discord.ButtonStyle.danger, custom_id=f"reset_{key_type.lower()}_key"))
+        self.add_item(discord.ui.Button(label="View Key", style=discord.ButtonStyle.secondary, custom_id=f"view_{key_type.lower()}_key"))
 
 # Start a simple web server for port support (useful for web services like Replit)
 app = Flask(__name__)
@@ -912,9 +950,9 @@ async def keyrole(interaction: discord.Interaction, role: discord.Role):
         embed = create_error_embed("Error", "An error occurred while setting the key role.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="setup_key_message", description="Create AV/ASTD key management panels")
+@bot.tree.command(name="setup_key_message", description="Create AV/AA key management panels")
 @app_commands.describe(
-    astd_channel="Channel to post ASTDS (ASTDS) key management panel",
+    astd_channel="Channel to post ASTDS (AA) key management panel",
     av_channel="Channel to post AV key management panel"
 )
 async def setup_key_message(
@@ -945,13 +983,7 @@ async def setup_key_message(
                 ),
                 color=0x5865F2
             )
-            av_view = discord.ui.View()
-            av_view.add_item(discord.ui.Button(
-                label="Manage Your AV License Key",
-                style=discord.ButtonStyle.primary,
-                custom_id="manage_av_key"
-            ))
-            await av_channel.send(embed=av_embed, view=av_view)
+            await av_channel.send(embed=av_embed, view=KeyPanelView("AV"))
             sent.append(f"AV panel sent to {av_channel.mention}")
 
         # ASTDS Panel
@@ -965,18 +997,12 @@ async def setup_key_message(
                     "• Reset your existing key (Only once)\n"
                     "• View your current key details\n\n"
                     "**Requirements**\n"
-                    "You must have the **ASTD Premium** role to use these features.\n\n"
-                    "Click the button below to manage your ASTD license key"
+                    "You must have the **ASTDS Premium** role to use these features.\n\n"
+                    "Click the button below to manage your ASTDS license key"
                 ),
                 color=0xFEE75C
             )
-            astd_view = discord.ui.View()
-            astd_view.add_item(discord.ui.Button(
-                label="Manage Your ASTDs License Key",
-                style=discord.ButtonStyle.primary,
-                custom_id="manage_astd_key"
-            ))
-            await astd_channel.send(embed=astd_embed, view=astd_view)
+            await astd_channel.send(embed=astd_embed, view=KeyPanelView("ASTDS"))
             sent.append(f"ASTDS panel sent to {astd_channel.mention}")
 
         if sent:
