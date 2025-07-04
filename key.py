@@ -3,7 +3,7 @@ from discord import app_commands
 import asyncio
 import json
 import os
-import flusk
+import flask
 from typing import Optional
 
 OWNER_ID = 123456789012345678  # Replace with your Discord user ID
