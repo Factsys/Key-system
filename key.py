@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 OWNER_IDS = []
-owner_ids_str = os.getenv("OWNER_ID", "776883692983156736")
+owner_ids_str = os.getenv("OWNER_ID", "776883692983156736", "829256979716898826")
 if owner_ids_str:
     for owner_id in owner_ids_str.split(','):
         try:
@@ -33,7 +33,7 @@ if owner_ids_str:
             logger.warning(f"Invalid owner ID: {owner_id}")
 
 ROLE_IDS = []
-role_ids_str = os.getenv("ROLE_ID", "")
+role_ids_str = os.getenv("ROLE_ID", "1378078542457344061")
 if role_ids_str:
     for role_id in role_ids_str.split(','):
         try:
@@ -140,9 +140,13 @@ class LicenseKey:
         )
 
     def is_expired(self):
+        if self.expires_at.year >= 9999:
+            return False
         return datetime.now() > self.expires_at
 
     def days_until_expiry(self):
+        if self.expires_at.year >= 9999:
+            return '∞'
         delta = self.expires_at - datetime.now()
         return delta.days
 
@@ -158,11 +162,12 @@ class KeyManager:
 
     @staticmethod
     async def create_key(key_type: str, user_id: int, hwid: str, duration_days: int, name: str = "") -> LicenseKey:
-        """Create a new license key"""
         key_id = KeyManager.generate_key(key_type, user_id, hwid)
-        expires_at = datetime.now() + timedelta(days=duration_days)
+        if duration_days == 0:
+            expires_at = datetime(year=9999, month=12, day=31)
+        else:
+            expires_at = datetime.now() + timedelta(days=duration_days)
         created_at = datetime.now()
-        
         license_key = LicenseKey(
             key_id=key_id,
             key_type=key_type,
@@ -172,27 +177,21 @@ class KeyManager:
             created_at=created_at,
             name=name
         )
-        
         keys_data = await storage.get("keys", {})
         keys_data[key_id] = license_key.to_dict()
         await storage.set("keys", keys_data)
-        
         users_data = await storage.get("users", {})
         user_key = str(user_id)
         if user_key not in users_data:
             users_data[user_key] = {"discord_id": user_id, "keys": {}, "hwids": []}
-        
         users_data[user_key]["keys"][key_id] = {
             "key_type": key_type,
             "expires_at": expires_at.isoformat(),
             "hwid": hwid
         }
-        
         if hwid not in users_data[user_key]["hwids"]:
             users_data[user_key]["hwids"].append(hwid)
-            
         await storage.set("users", users_data)
-        
         logger.info(f"Created {key_type} key {key_id} for user {user_id}")
         return license_key
 
@@ -293,6 +292,21 @@ def create_embed(title: str, description: str, color: int = 0x00ff00) -> discord
 def create_error_embed(title: str, description: str) -> discord.Embed:
     """Create an error embed"""
     return create_embed(title, description, color=0xff0000)
+
+def parse_duration(duration_str: str) -> Optional[int]:
+    """Parse duration string like '1y2m3d4h' into total days (int). Returns None if invalid."""
+    import re
+    if duration_str.lower() in ("permanent", "never", "0"):
+        return 0
+    pattern = r"(?:(\d+)y)?(?:(\d+)m)?(?:(\d+)d)?(?:(\d+)h)?"
+    match = re.fullmatch(pattern, duration_str.strip().lower())
+    if not match:
+        return None
+    years, months, days, hours = match.groups(default="0")
+    total_days = int(years) * 365 + int(months) * 30 + int(days)
+    # We'll store hours as a float fraction of a day
+    total_days += int(hours) / 24
+    return int(total_days) if total_days > 0 else 0
 
 class LicenseBot(discord.Client):
     def __init__(self):
@@ -471,7 +485,7 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
 @bot.tree.command(name="create_key", description="Create a new AV/ASTDS license key")
 @app_commands.describe(
     key_type="Type of key (AV or ASTDS)",
-    duration="Duration in days",
+    duration="Duration (e.g. 1y, 1m, 1d, 1h, permanent)",
     name="Name for the key",
     user="User to create key for",
     hwid="Hardware ID"
@@ -480,22 +494,24 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
     app_commands.Choice(name="AV", value="AV"),
     app_commands.Choice(name="ASTDS", value="ASTDS")
 ])
-async def create_key(interaction: discord.Interaction, key_type: str, duration: int, 
+async def create_key(interaction: discord.Interaction, key_type: str, duration: str, 
                     name: str, user: discord.User, hwid: str):
     try:
         if not await has_key_role(interaction):
             embed = create_error_embed("Permission Denied", "You don't have permission to create keys.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-        
-        if duration <= 0 or duration > 365:
-            embed = create_error_embed("Invalid Duration", "Duration must be between 1 and 365 days.")
+        days = parse_duration(duration)
+        if days is None:
+            embed = create_error_embed("Invalid Duration", "Duration must be like 1y, 1m, 1d, 1h, permanent, or a number of days.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-        
+        if days < 0 or days > 3650:
+            embed = create_error_embed("Invalid Duration", "Duration must be between 1 hour and 10 years, or 'permanent'.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
         user_keys = await KeyManager.get_user_keys(user.id)
         existing_keys = [k for k in user_keys if k.key_type == key_type and not k.is_expired()]
-        
         if existing_keys:
             embed = create_error_embed(
                 "Key Already Exists", 
@@ -503,33 +519,31 @@ async def create_key(interaction: discord.Interaction, key_type: str, duration: 
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-        
-        license_key = await KeyManager.create_key(key_type, user.id, hwid, duration, name)
-        
+        # If days==0, treat as permanent
+        license_key = await KeyManager.create_key(key_type, user.id, hwid, days, name)
+        expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
         embed = create_embed(
             "Key Created Successfully",
             f"**Key ID:** `{license_key.key_id}`\n"
             f"**Type:** {key_type}\n"
             f"**User:** {user.mention}\n"
-            f"**Duration:** {duration} days\n"
+            f"**Duration:** {'Permanent' if days == 0 else duration}\n"
             f"**HWID:** `{hwid}`\n"
-            f"**Expires:** {license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"**Expires:** {expires_str}"
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-        
         try:
             dm_embed = create_embed(
                 f"New {key_type} License Key",
                 f"You have been granted a new {key_type} license key.\n\n"
                 f"**Key ID:** `{license_key.key_id}`\n"
-                f"**Duration:** {duration} days\n"
-                f"**Expires:** {license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"**Duration:** {'Permanent' if days == 0 else duration}\n"
+                f"**Expires:** {expires_str}\n\n"
                 f"Keep this key safe and do not share it with others."
             )
             await user.send(embed=dm_embed)
         except discord.Forbidden:
             logger.warning(f"Could not DM user {user.id}")
-            
     except Exception as e:
         logger.error(f"Error in create_key: {e}")
         embed = create_error_embed("Error", "An error occurred while creating the key.")
@@ -898,9 +912,9 @@ async def keyrole(interaction: discord.Interaction, role: discord.Role):
         embed = create_error_embed("Error", "An error occurred while setting the key role.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="setup_key_message", description="Create AV/AA key management panels")
+@bot.tree.command(name="setup_key_message", description="Create AV/ASTD key management panels")
 @app_commands.describe(
-    astd_channel="Channel to post ASTDS (AA) key management panel",
+    astd_channel="Channel to post ASTDS (ASTDS) key management panel",
     av_channel="Channel to post AV key management panel"
 )
 async def setup_key_message(
@@ -951,19 +965,19 @@ async def setup_key_message(
                     "• Reset your existing key (Only once)\n"
                     "• View your current key details\n\n"
                     "**Requirements**\n"
-                    "You must have the **AA Premium** role to use these features.\n\n"
-                    "Click the button below to manage your AA license key"
+                    "You must have the **ASTD Premium** role to use these features.\n\n"
+                    "Click the button below to manage your ASTD license key"
                 ),
                 color=0xFEE75C
             )
             astd_view = discord.ui.View()
             astd_view.add_item(discord.ui.Button(
-                label="Manage Your AA License Key",
+                label="Manage Your ASTDs License Key",
                 style=discord.ButtonStyle.primary,
-                custom_id="manage_aa_key"
+                custom_id="manage_astd_key"
             ))
             await astd_channel.send(embed=astd_embed, view=astd_view)
-            sent.append(f"AA panel sent to {astd_channel.mention}")
+            sent.append(f"ASTDS panel sent to {astd_channel.mention}")
 
         if sent:
             await interaction.response.send_message("\n".join(sent), ephemeral=True)
