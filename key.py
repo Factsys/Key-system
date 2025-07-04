@@ -898,6 +898,82 @@ async def keyrole(interaction: discord.Interaction, role: discord.Role):
         embed = create_error_embed("Error", "An error occurred while setting the key role.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+@bot.tree.command(name="setup_key_message", description="Create AV/AA key management panels")
+@app_commands.describe(
+    astd_channel="Channel to post ASTDS (AA) key management panel",
+    av_channel="Channel to post AV key management panel"
+)
+async def setup_key_message(
+    interaction: discord.Interaction,
+    astd_channel: Optional[discord.TextChannel] = None,
+    av_channel: Optional[discord.TextChannel] = None
+):
+    try:
+        if not await has_key_role(interaction):
+            embed = create_error_embed("Permission Denied", "You don't have permission to use this command.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        sent = []
+        # AV Panel
+        if av_channel:
+            av_embed = discord.Embed(
+                title="\U0001F511 Anime Vanguards License Key Management",
+                description=(
+                    "Manage your license key for Anime Vanguards\n\n"
+                    "**Available Options**\n"
+                    "• Generate a new license key\n"
+                    "• Reset your existing key (Only once)\n"
+                    "• View your current key details\n\n"
+                    "**Requirements**\n"
+                    "You must have the **AV Premium** role to use these features.\n\n"
+                    "Click the button below to manage your AV license key"
+                ),
+                color=0x5865F2
+            )
+            av_view = discord.ui.View()
+            av_view.add_item(discord.ui.Button(
+                label="Manage Your AV License Key",
+                style=discord.ButtonStyle.primary,
+                custom_id="manage_av_key"
+            ))
+            await av_channel.send(embed=av_embed, view=av_view)
+            sent.append(f"AV panel sent to {av_channel.mention}")
+
+        # ASTDS Panel
+        if astd_channel:
+            astd_embed = discord.Embed(
+                title="\U0001F511 ASTDS License Key Management",
+                description=(
+                    "Manage your license key for ASTDS\n\n"
+                    "**Available Options**\n"
+                    "• Generate a new license key\n"
+                    "• Reset your existing key (Only once)\n"
+                    "• View your current key details\n\n"
+                    "**Requirements**\n"
+                    "You must have the **AA Premium** role to use these features.\n\n"
+                    "Click the button below to manage your AA license key"
+                ),
+                color=0xFEE75C
+            )
+            astd_view = discord.ui.View()
+            astd_view.add_item(discord.ui.Button(
+                label="Manage Your AA License Key",
+                style=discord.ButtonStyle.primary,
+                custom_id="manage_aa_key"
+            ))
+            await astd_channel.send(embed=astd_embed, view=astd_view)
+            sent.append(f"AA panel sent to {astd_channel.mention}")
+
+        if sent:
+            await interaction.response.send_message("\n".join(sent), ephemeral=True)
+        else:
+            await interaction.response.send_message("No channel specified.", ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in setup_key_message: {e}")
+        embed = create_error_embed("Error", "An error occurred while setting up the key message panel.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # Run the bot
 if __name__ == "__main__":
     if not TOKEN:
