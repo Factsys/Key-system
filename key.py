@@ -21,7 +21,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-OWNER_ID = int(os.getenv("OWNER_ID", "776883692983156736"))
+OWNER_IDS = []
+owner_ids_str = os.getenv("OWNER_ID", "123456789012345678")
+if owner_ids_str:
+    for owner_id in owner_ids_str.split(','):
+        try:
+            OWNER_IDS.append(int(owner_id.strip()))
+        except ValueError:
+            logger.warning(f"Invalid owner ID: {owner_id}")
+
+ROLE_IDS = []
+role_ids_str = os.getenv("ROLE_ID", "")
+if role_ids_str:
+    for role_id in role_ids_str.split(','):
+        try:
+            ROLE_IDS.append(int(role_id.strip()))
+        except ValueError:
+            logger.warning(f"Invalid role ID: {role_id}")
+
 TOKEN = os.getenv("TOKEN", "")
 
 class Storage:
@@ -240,17 +257,29 @@ class KeyManager:
         return False
 
 def is_owner(interaction: discord.Interaction) -> bool:
-    return interaction.user.id == OWNER_ID
+    return interaction.user.id in OWNER_IDS
 
 async def has_key_role(interaction: discord.Interaction) -> bool:
     """Check if user has the key management role"""
     if is_owner(interaction):
         return True
     
+    # Check if user has any of the configured role IDs
+    if ROLE_IDS and hasattr(interaction, 'guild') and interaction.guild:
+        member = interaction.guild.get_member(interaction.user.id)
+        if member and member.roles:
+            user_role_ids = [role.id for role in member.roles]
+            if any(role_id in user_role_ids for role_id in ROLE_IDS):
+                return True
+    
+    # Legacy role name check
     key_role_name = await storage.get("key_role", "KeyManager")
-    if hasattr(interaction.user, 'roles'):
-        user_roles = [role.name for role in interaction.user.roles]
-        return key_role_name in user_roles
+    if hasattr(interaction, 'guild') and interaction.guild:
+        member = interaction.guild.get_member(interaction.user.id)
+        if member and member.roles:
+            user_roles = [role.name for role in member.roles]
+            return key_role_name in user_roles
+    
     return False
 
 def create_embed(title: str, description: str, color: int = 0x00ff00) -> discord.Embed:
@@ -285,6 +314,76 @@ class LicenseBot(discord.Client):
         logger.error(f'Error in {event}: {args}', exc_info=True)
 
 bot = LicenseBot()
+
+# --- Slash Commands ---
+
+@bot.tree.command(name="help", description="Show all available commands")
+async def help_command(interaction: discord.Interaction):
+    """Display help information for all bot commands"""
+    try:
+        is_admin = await has_key_role(interaction)
+        owner = is_owner(interaction)
+        
+        embed = discord.Embed(
+            title="🔑 License Bot Commands",
+            description="Here are all the available commands:",
+            color=0x00ff00
+        )
+        
+        # User commands
+        embed.add_field(
+            name="👤 User Commands",
+            value=(
+                "`/manage_key` - View or reset your AV/ASTDS license key\n"
+                "`/help` - Show this help message"
+            ),
+            inline=False
+        )
+        
+        # Admin commands
+        if is_admin:
+            embed.add_field(
+                name="🔧 Admin Commands",
+                value=(
+                    "`/create_key` - Create a new AV/ASTDS license key\n"
+                    "`/check_license` - Check license status by HWID or user\n"
+                    "`/delete_key` - Delete a license key\n"
+                    "`/list_keys` - List all license keys\n"
+                    "`/user_lookup` - Look up license info for a user\n"
+                    "`/register_user` - Register a user with HWID\n"
+                    "`/check_hwid` - Check HWID status\n"
+                    "`/health` - Check system health"
+                ),
+                inline=False
+            )
+        
+        # Owner commands
+        if owner:
+            embed.add_field(
+                name="👑 Owner Commands",
+                value="`/keyrole` - Set the role for key management",
+                inline=False
+            )
+        
+        embed.add_field(
+            name="ℹ️ Information",
+            value=(
+                f"**Your Access Level:** {'Owner' if owner else 'Admin' if is_admin else 'User'}\n"
+                f"**Key Types:** AV, ASTDS\n"
+                f"**Bot Version:** 2.0"
+            ),
+            inline=False
+        )
+        
+        embed.timestamp = datetime.now()
+        embed.set_footer(text="Use commands with /")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        logger.error(f"Error in help command: {e}")
+        embed = create_error_embed("Error", "An error occurred while showing help.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="manage_key", description="View or reset your AV/ASTDS license key")
 @app_commands.describe(key_type="Type of key (AV or ASTDS)", action="Action to perform")
@@ -772,6 +871,7 @@ async def keyrole(interaction: discord.Interaction, role: discord.Role):
         embed = create_error_embed("Error", "An error occurred while setting the key role.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# Run the bot
 if __name__ == "__main__":
     if not TOKEN:
         logger.error("No Discord bot token found. Please set the TOKEN environment variable.")
