@@ -8,6 +8,8 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 import time
+import threading
+from flask import Flask
 
 # Configure logging
 logging.basicConfig(
@@ -312,6 +314,22 @@ class LicenseBot(discord.Client):
 
     async def on_error(self, event, *args, **kwargs):
         logger.error(f'Error in {event}: {args}', exc_info=True)
+
+# Start a simple web server for port support (useful for web services like Replit)
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_web():
+    port = int(os.getenv("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# Start the web server in a background thread
+web_thread = threading.Thread(target=run_web)
+web_thread.daemon = True
+web_thread.start()
 
 bot = LicenseBot()
 
