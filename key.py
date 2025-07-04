@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 import time
 import threading
-from flask import Flask
+from flask import Flask, request, jsonify
 
 # Configure logging
 logging.basicConfig(
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 OWNER_IDS = []
-owner_ids_str = os.getenv("OWNER_ID", "776883692983156736")
+owner_ids_str = os.getenv("OWNER_ID", "123456789012345678")
 if owner_ids_str:
     for owner_id in owner_ids_str.split(','):
         try:
@@ -321,6 +321,15 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return "Bot is running!"
+
+@app.route("/check", methods=["POST"])
+def check_key():
+    data = request.get_json()
+    key = data.get("key", "")
+    # Check if the key exists in your storage
+    keys_data = storage.data.get("keys", {})
+    valid = key in keys_data
+    return jsonify({"valid": valid})
 
 def run_web():
     port = int(os.getenv("PORT", 8080))
