@@ -3,6 +3,7 @@ from discord import app_commands
 import asyncio
 import json
 import os
+import flusk
 from typing import Optional
 
 OWNER_ID = 123456789012345678  # Replace with your Discord user ID
@@ -33,6 +34,10 @@ class Storage:
         await self.save()
 
 storage = Storage(KEYS_FILE)
+
+class OwnerOnly(app_commands.Check):
+    async def __call__(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == OWNER_ID
 
 class LicenseBot(discord.Client):
     def __init__(self):
@@ -66,87 +71,87 @@ bot = LicenseBot()
 # --- Slash Commands (Owner Only, Hidden) ---
 
 @app_commands.command(name="manage_key", description="Generate, reset, or view your AV/AA license key")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def manage_key(interaction: discord.Interaction, key_type: str):
     await interaction.response.send_message(f"Manage your {key_type} key here.", ephemeral=True)
 
 @app_commands.command(name="create_key", description="Create a new AV/AA license key")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def create_key(interaction: discord.Interaction, key_type: str, duration: int, name: str, user: discord.User):
     await interaction.response.send_message(f"Key created for {user.mention}.", ephemeral=True)
 
 @app_commands.command(name="check_license", description="Check license status by HWID or Discord user")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def check_license(interaction: discord.Interaction, identifier: str, dm_target: Optional[discord.User] = None):
     await interaction.response.send_message(f"License status for {identifier}.", ephemeral=True)
 
 @app_commands.command(name="check_expiry", description="Check when a license expires")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def check_expiry(interaction: discord.Interaction, identifier: str, key_type: str, dm_target: Optional[discord.User] = None):
     await interaction.response.send_message(f"Expiry for {identifier} ({key_type}).", ephemeral=True)
 
 @app_commands.command(name="delete_key", description="Delete a license key")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def delete_key(interaction: discord.Interaction, license_key: str, all: Optional[bool] = False, user: Optional[discord.User] = None):
     await interaction.response.send_message(f"Key {license_key} deleted.", ephemeral=True)
 
 @app_commands.command(name="list_keys", description="List all license keys (filtered by AV/AA)")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def list_keys(interaction: discord.Interaction, key_type: str):
     await interaction.response.send_message(f"Listing all {key_type} keys.", ephemeral=True)
 
 @app_commands.command(name="reset_user_key", description="Reset a user's license key")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def reset_user_key(interaction: discord.Interaction, user: discord.User, key_type: str):
     await interaction.response.send_message(f"Key for {user.mention} reset.", ephemeral=True)
 
 @app_commands.command(name="user_lookup", description="Look up complete license information (AV/AA)")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def user_lookup(interaction: discord.Interaction, user: discord.User):
     await interaction.response.send_message(f"User info for {user.mention}.", ephemeral=True)
 
 @app_commands.command(name="list_users", description="List users with licenses (AV/AA/ALL)")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def list_users(interaction: discord.Interaction, page: int = 1, key_type: str = "ALL", status: str = "active"):
     await interaction.response.send_message(f"Listing users page {page}.", ephemeral=True)
 
 @app_commands.command(name="register_user", description="Register a new user with a license key")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def register_user(interaction: discord.Interaction, hwid: str, user: discord.User, order: str):
     await interaction.response.send_message(f"User {user.mention} registered with HWID {hwid}.", ephemeral=True)
 
 @app_commands.command(name="verify_user", description="Verify a user by HWID")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def verify_user(interaction: discord.Interaction, hwid: str, user: discord.User):
     await interaction.response.send_message(f"User {user.mention} verified for HWID {hwid}.", ephemeral=True)
 
 @app_commands.command(name="delete_user", description="Delete a user and all their license data")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def delete_user(interaction: discord.Interaction, user: discord.User, reason: str):
     await interaction.response.send_message(f"User {user.mention} deleted for reason: {reason}", ephemeral=True)
 
 @app_commands.command(name="setup_key_message", description="Create AV/ASTDS key management panels")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def setup_key_message(interaction: discord.Interaction, av_channel: discord.TextChannel, aa_channel: discord.TextChannel):
     await interaction.response.send_message("Key management panels set up.", ephemeral=True)
 
 @app_commands.command(name="wipe_all_keys", description="Wipe all keys and reset user generation ability")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def wipe_all_keys(interaction: discord.Interaction):
     await interaction.response.send_message("All keys wiped.", ephemeral=True)
 
 @app_commands.command(name="check_hwid", description="Check HWID status")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def check_hwid(interaction: discord.Interaction, hwid: str, user: Optional[discord.User] = None):
     await interaction.response.send_message(f"HWID {hwid} status checked.", ephemeral=True)
 
 @app_commands.command(name="health", description="Check system health and connection status")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def health(interaction: discord.Interaction):
     await interaction.response.send_message("System is healthy and connected.", ephemeral=True)
 
 @app_commands.command(name="keyrole", description="Set the role that can create keys")
-@app_commands.check(lambda interaction: interaction.user.id == OWNER_ID)
+@OwnerOnly()
 async def keyrole(interaction: discord.Interaction, role: discord.Role):
     await storage.set("key_role", role.name)
     await interaction.response.send_message(f"Key creation role set to {role.mention}", ephemeral=True)
