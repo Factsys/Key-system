@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-OWNER_ID = int(os.getenv("OWNER_ID", "123456789012345678"))
+OWNER_ID = int(os.getenv("OWNER_ID", "776883692983156736"))
 TOKEN = os.getenv("TOKEN", "")
 
 class Storage:
@@ -286,11 +286,11 @@ class LicenseBot(discord.Client):
 
 bot = LicenseBot()
 
-@bot.tree.command(name="manage_key", description="View or reset your AV/AA license key")
-@app_commands.describe(key_type="Type of key (AV or AA)", action="Action to perform")
+@bot.tree.command(name="manage_key", description="View or reset your AV/ASTDS license key")
+@app_commands.describe(key_type="Type of key (AV or ASTDS)", action="Action to perform")
 @app_commands.choices(key_type=[
     app_commands.Choice(name="AV", value="AV"),
-    app_commands.Choice(name="AA", value="AA")
+    app_commands.Choice(name="ASTDS", value="ASTDS")
 ])
 @app_commands.choices(action=[
     app_commands.Choice(name="View", value="view"),
@@ -342,9 +342,9 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
         embed = create_error_embed("Error", "An error occurred while managing your key.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="create_key", description="Create a new AV/AA license key")
+@bot.tree.command(name="create_key", description="Create a new AV/ASTDS license key")
 @app_commands.describe(
-    key_type="Type of key (AV or AA)",
+    key_type="Type of key (AV or ASTDS)",
     duration="Duration in days",
     name="Name for the key",
     user="User to create key for",
@@ -352,7 +352,7 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
 )
 @app_commands.choices(key_type=[
     app_commands.Choice(name="AV", value="AV"),
-    app_commands.Choice(name="AA", value="AA")
+    app_commands.Choice(name="ASTDS", value="ASTDS")
 ])
 async def create_key(interaction: discord.Interaction, key_type: str, duration: int, 
                     name: str, user: discord.User, hwid: str):
@@ -522,7 +522,7 @@ async def delete_key(interaction: discord.Interaction, license_key: str = "",
 @app_commands.describe(key_type="Type of key to list")
 @app_commands.choices(key_type=[
     app_commands.Choice(name="AV", value="AV"),
-    app_commands.Choice(name="AA", value="AA"),
+    app_commands.Choice(name="ASTDS", value="ASTDS"),
     app_commands.Choice(name="All", value="ALL")
 ])
 async def list_keys(interaction: discord.Interaction, key_type: str):
