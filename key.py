@@ -84,7 +84,6 @@ class Storage:
         self.data[key] = value
         await self.save()
 
-# Initialize storage
 storage = Storage()
 
 class LicenseKey:
@@ -155,12 +154,10 @@ class KeyManager:
             name=name
         )
         
-        # Store the key
         keys_data = await storage.get("keys", {})
         keys_data[key_id] = license_key.to_dict()
         await storage.set("keys", keys_data)
         
-        # Update user data
         users_data = await storage.get("users", {})
         user_key = str(user_id)
         if user_key not in users_data:
@@ -196,11 +193,9 @@ class KeyManager:
             key_info = keys_data[key_id]
             user_id = str(key_info["user_id"])
             
-            # Remove from keys storage
             del keys_data[key_id]
             await storage.set("keys", keys_data)
             
-            # Remove from user data
             users_data = await storage.get("users", {})
             if user_id in users_data and key_id in users_data[user_id]["keys"]:
                 del users_data[user_id]["keys"][key_id]
@@ -291,8 +286,6 @@ class LicenseBot(discord.Client):
 
 bot = LicenseBot()
 
-# --- Slash Commands ---
-
 @bot.tree.command(name="manage_key", description="View or reset your AV/AA license key")
 @app_commands.describe(key_type="Type of key (AV or AA)", action="Action to perform")
 @app_commands.choices(key_type=[
@@ -335,7 +328,6 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
             
-            # Delete existing keys of this type
             for key in matching_keys:
                 await KeyManager.delete_key(key.key_id)
             
@@ -375,7 +367,6 @@ async def create_key(interaction: discord.Interaction, key_type: str, duration: 
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Check if user already has a key of this type
         user_keys = await KeyManager.get_user_keys(user.id)
         existing_keys = [k for k in user_keys if k.key_type == key_type and not k.is_expired()]
         
@@ -387,7 +378,6 @@ async def create_key(interaction: discord.Interaction, key_type: str, duration: 
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Create the key
         license_key = await KeyManager.create_key(key_type, user.id, hwid, duration, name)
         
         embed = create_embed(
@@ -401,7 +391,6 @@ async def create_key(interaction: discord.Interaction, key_type: str, duration: 
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
         
-        # Try to DM the user
         try:
             dm_embed = create_embed(
                 f"New {key_type} License Key",
@@ -430,18 +419,14 @@ async def check_license(interaction: discord.Interaction, identifier: str,
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Check if identifier is a HWID or user mention
         user_id = None
         hwid = None
         
         if identifier.startswith("<@") and identifier.endswith(">"):
-            # User mention
             user_id = int(identifier[2:-1].replace("!", ""))
         else:
-            # Assume HWID
             hwid = identifier
         
-        # Find matching keys
         keys_data = await storage.get("keys", {})
         matching_keys = []
         
@@ -455,7 +440,6 @@ async def check_license(interaction: discord.Interaction, identifier: str,
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Build response
         response_lines = []
         for key in matching_keys:
             status = "Expired" if key.is_expired() else "Active"
@@ -505,7 +489,6 @@ async def delete_key(interaction: discord.Interaction, license_key: str = "",
         deleted_count = 0
         
         if all and user:
-            # Delete all keys for a specific user
             user_keys = await KeyManager.get_user_keys(user.id)
             for key in user_keys:
                 if await KeyManager.delete_key(key.key_id):
@@ -517,7 +500,6 @@ async def delete_key(interaction: discord.Interaction, license_key: str = "",
             )
             
         elif license_key:
-            # Delete specific key
             if await KeyManager.delete_key(license_key):
                 deleted_count = 1
                 embed = create_embed(
@@ -563,10 +545,8 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Sort keys by creation date
         keys.sort(key=lambda x: x.created_at, reverse=True)
         
-        # Build response (limit to first 10 keys)
         response_lines = []
         for key in keys[:10]:
             status = "Expired" if key.is_expired() else "Active"
@@ -607,7 +587,6 @@ async def user_lookup(interaction: discord.Interaction, user: discord.User):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Build response
         response_lines = [f"**User:** {user.mention}"]
         
         if user_info.get("hwids"):
@@ -646,7 +625,6 @@ async def register_user(interaction: discord.Interaction, hwid: str, user: disco
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Add user to database
         users_data = await storage.get("users", {})
         user_key = str(user.id)
         
@@ -688,7 +666,6 @@ async def check_hwid(interaction: discord.Interaction, hwid: str, user: Optional
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Find all users with this HWID
         users_data = await storage.get("users", {})
         matching_users = []
         
@@ -701,7 +678,6 @@ async def check_hwid(interaction: discord.Interaction, hwid: str, user: Optional
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Build response
         response_lines = [f"**HWID:** `{hwid}`"]
         
         for user_id in matching_users:
@@ -716,7 +692,6 @@ async def check_hwid(interaction: discord.Interaction, hwid: str, user: Optional
             )
         
         if user:
-            # Verify specific user
             if str(user.id) in matching_users:
                 response_lines.append(f"\n✅ HWID verified for {user.mention}")
             else:
@@ -741,14 +716,12 @@ async def health(interaction: discord.Interaction):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Check data integrity
         keys_data = await storage.get("keys", {})
         users_data = await storage.get("users", {})
         
         total_keys = len(keys_data)
         total_users = len(users_data)
         
-        # Count active vs expired keys
         active_keys = 0
         expired_keys = 0
         
@@ -799,7 +772,6 @@ async def keyrole(interaction: discord.Interaction, role: discord.Role):
         embed = create_error_embed("Error", "An error occurred while setting the key role.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Run the bot
 if __name__ == "__main__":
     if not TOKEN:
         logger.error("No Discord bot token found. Please set the TOKEN environment variable.")
