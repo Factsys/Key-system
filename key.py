@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 OWNER_IDS = []
-owner_ids_str = os.getenv("OWNER_ID", "776883692983156736,829256979716898826")
+owner_ids_str = os.getenv("OWNER_ID", "776883692983156736")
 if owner_ids_str:
     for owner_id in owner_ids_str.split(','):
         try:
@@ -371,7 +371,33 @@ class ASTDSGenerateKeyButton(discord.ui.Button):
         if not has_astds_access(interaction):
             await interaction.response.send_message("You don't have the required role to generate ASTDS keys.", ephemeral=True)
             return
-        await interaction.response.send_message("[Placeholder] Key generation coming soon!", ephemeral=True)
+        # Generate a new key for the user (if not already active)
+        user = interaction.user
+        user_keys = await KeyManager.get_user_keys(user.id)
+        existing_keys = [k for k in user_keys if k.key_type == "ASTDS" and not k.is_expired()]
+        if existing_keys:
+            await interaction.response.send_message("You already have an active ASTDS key.", ephemeral=True)
+            return
+        # Generate key for 1 year by default
+        duration = "1y"
+        days = parse_duration(duration)
+        hwid = str(user.id)  # You can change this to a real HWID if needed
+        license_key = await KeyManager.create_key("ASTDS", user.id, hwid, days, name="Auto-generated")
+        expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
+        # DM the user the key
+        try:
+            dm_embed = create_embed(
+                f"New ASTDS License Key",
+                f"You have been granted a new ASTDS license key.\n\n"
+                f"**Key ID:** `{license_key.key_id}`\n"
+                f"**Duration:** {duration}\n"
+                f"**Expires:** {expires_str}\n\n"
+                f"Keep this key safe and do not share it with others."
+            )
+            await user.send(embed=dm_embed)
+            await interaction.response.send_message("Key generated and sent to your DMs!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("Could not DM you the key. Please check your DM settings.", ephemeral=True)
 
 class ASTDSResetKeyButton(discord.ui.Button):
     def __init__(self):
