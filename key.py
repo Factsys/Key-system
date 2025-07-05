@@ -297,9 +297,15 @@ async def has_key_role(interaction: discord.Interaction) -> bool:
 # Only allow this role or owners
 ASTD_ROLE_ID = 1378078542457344061
 
-def has_astd_access(interaction: discord.Interaction) -> bool:
+async def has_astd_access(interaction: discord.Interaction) -> bool:
     if is_owner(interaction):
         return True
+    
+    # Check if user has key role access (includes exclusive roles)
+    if await has_key_role(interaction):
+        return True
+    
+    # Also check the hardcoded ASTD role ID as fallback
     if hasattr(interaction, 'guild') and interaction.guild:
         member = interaction.guild.get_member(interaction.user.id)
         if member and member.roles:
@@ -358,7 +364,7 @@ class ASTDPanelView(discord.ui.View):
 
     @discord.ui.button(label="Manage Your ASTD License Key", style=discord.ButtonStyle.primary, custom_id="manage_astd_key")
     async def manage_astd_key(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_astd_access(interaction):
+        if not await has_astd_access(interaction):
             await interaction.response.send_message(
                 "You don't have the required role to manage ASTD keys.", ephemeral=True)
             return
@@ -379,7 +385,7 @@ class ASTDGenerateKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Generate Key", style=discord.ButtonStyle.primary, custom_id="generate_astd_key")
     async def callback(self, interaction: discord.Interaction):
-        if not has_astd_access(interaction):
+        if not await has_astd_access(interaction):
             await interaction.response.send_message("You don't have the required role to generate ASTD keys.", ephemeral=True)
             return
         # Generate a new key for the user (if not already active)
@@ -414,7 +420,7 @@ class ASTDResetKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Reset Key", style=discord.ButtonStyle.danger, custom_id="reset_astd_key")
     async def callback(self, interaction: discord.Interaction):
-        if not has_astd_access(interaction):
+        if not await has_astd_access(interaction):
             await interaction.response.send_message("You don't have the required role to reset ASTD keys.", ephemeral=True)
             return
         user = interaction.user
@@ -464,7 +470,7 @@ class ASTDViewKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="View Key", style=discord.ButtonStyle.secondary, custom_id="view_astd_key")
     async def callback(self, interaction: discord.Interaction):
-        if not has_astd_access(interaction):
+        if not await has_astd_access(interaction):
             await interaction.response.send_message("You don't have the required role to view ASTD keys.", ephemeral=True)
             return
         
@@ -545,21 +551,39 @@ async def help_command(interaction: discord.Interaction):
 
         # Admin/Manager commands
         if is_admin:
-            embed.add_field(
-                name="🔧 Manager Commands",
-                value=(
-                    "`/create_key` - Create a new AV/ASTD license key\n"
-                    "`/check_license` - Check license status by HWID or user\n"
-                    "`/delete_key` - Delete a license key\n"
-                    "`/list_keys` - List all license keys\n"
-                    "`/user_lookup` - Look up license info for a user\n"
-                    "`/register_user` - Register a user with HWID\n"
-                    "`/check_hwid` - Check HWID status\n"
-                    "`/health` - Check system health\n"
-                    "`/setup_key_message` - Create ASTD key management panel"
-                ),
-                inline=False
-            )
+            if has_exclusive:
+                embed.add_field(
+                    name="⭐ Exclusive Commands",
+                    value=(
+                        "`/create_key` - Create a new AV/ASTD license key\n"
+                        "`/check_license` - Check license status by HWID or user\n"
+                        "`/delete_key` - Delete a license key\n"
+                        "`/list_keys` - List all license keys\n"
+                        "`/user_lookup` - Look up license info for a user\n"
+                        "`/register_user` - Register a user with HWID\n"
+                        "`/check_hwid` - Check HWID status\n"
+                        "`/health` - Check system health\n"
+                        "`/setup_key_message` - Create ASTD key management panel\n"
+                        "**Can manage ASTD keys via panels**"
+                    ),
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🔧 Manager Commands",
+                    value=(
+                        "`/create_key` - Create a new AV/ASTD license key\n"
+                        "`/check_license` - Check license status by HWID or user\n"
+                        "`/delete_key` - Delete a license key\n"
+                        "`/list_keys` - List all license keys\n"
+                        "`/user_lookup` - Look up license info for a user\n"
+                        "`/register_user` - Register a user with HWID\n"
+                        "`/check_hwid` - Check HWID status\n"
+                        "`/health` - Check system health\n"
+                        "`/setup_key_message` - Create ASTD key management panel"
+                    ),
+                    inline=False
+                )
 
         # Owner commands
         if owner:
@@ -575,10 +599,12 @@ async def help_command(interaction: discord.Interaction):
 
         # Determine access level
         access_level = "User"
+        has_exclusive = False
+        
         if owner:
             access_level = "Owner"
         elif is_admin:
-            # Check if user has exclusive role
+            # Check if user has exclusive role first
             settings = await storage.get("settings", {})
             exclusive_roles = settings.get("exclusive_roles", [])
             if exclusive_roles and hasattr(interaction, 'guild') and interaction.guild:
@@ -587,9 +613,10 @@ async def help_command(interaction: discord.Interaction):
                     user_role_ids = [role.id for role in member.roles]
                     if any(role_id in user_role_ids for role_id in exclusive_roles):
                         access_level = "Exclusive"
-                    else:
-                        access_level = "Manager"
-            else:
+                        has_exclusive = True
+            
+            # If not exclusive, then they're a manager
+            if not has_exclusive:
                 access_level = "Manager"
 
         embed.add_field(
@@ -1107,7 +1134,7 @@ async def setup_key_message(
     astd_channel: Optional[discord.TextChannel] = None
 ):
     try:
-        if not has_astd_access(interaction):
+        if not await has_astd_access(interaction):
             embed = create_error_embed("Permission Denied", "You don't have permission to use this command.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
