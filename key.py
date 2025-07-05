@@ -107,7 +107,7 @@ storage = Storage()
 
 class LicenseKey:
     def __init__(self, key_id: str, key_type: str, user_id: int, hwid: str, 
-                 expires_at: datetime, created_at: datetime, name: str = "", status: str = "deactivated"):
+                 expires_at: datetime, created_at: datetime, name: str = "", status: str = "deactivated", resets_left: int = 3):
         self.key_id = key_id
         self.key_type = key_type
         self.user_id = user_id
@@ -116,6 +116,7 @@ class LicenseKey:
         self.created_at = created_at
         self.name = name
         self.status = status  # "activated" or "deactivated"
+        self.resets_left = resets_left
 
     def to_dict(self):
         return {
@@ -126,7 +127,8 @@ class LicenseKey:
             "expires_at": self.expires_at.isoformat(),
             "created_at": self.created_at.isoformat(),
             "name": self.name,
-            "status": self.status
+            "status": self.status,
+            "resets_left": self.resets_left
         }
 
     @classmethod
@@ -139,7 +141,8 @@ class LicenseKey:
             expires_at=datetime.fromisoformat(data["expires_at"]),
             created_at=datetime.fromisoformat(data["created_at"]),
             name=data.get("name", ""),
-            status=data.get("status", "deactivated")
+            status=data.get("status", "deactivated"),
+            resets_left=data.get("resets_left", 3)
         )
 
     def is_expired(self):
@@ -164,14 +167,16 @@ class KeyManager:
         return f"{key_type}-{key_hash}"
 
     @staticmethod
-    async def create_key(key_type: str, user_id: int, hwid: str, duration_days: int, name: str = "") -> LicenseKey:
+    async def create_key(key_type: str, user_id: int, hwid: str, duration_days: int, name: str = "", resets_left: int = None, unlimited_resets: bool = False) -> LicenseKey:
         key_id = KeyManager.generate_key(key_type, user_id, hwid)
         if duration_days == 0:
             expires_at = datetime(year=9999, month=12, day=31)
         else:
             expires_at = datetime.now() + timedelta(days=duration_days)
         created_at = datetime.now()
-        # Set status to deactivated by default
+        # Set resets_left: 3 for users, or unlimited (999999) for owners/managers/exclusive
+        if resets_left is None:
+            resets_left = 999999 if unlimited_resets else 3
         license_key = LicenseKey(
             key_id=key_id,
             key_type=key_type,
@@ -180,7 +185,8 @@ class KeyManager:
             expires_at=expires_at,
             created_at=created_at,
             name=name,
-            status="deactivated"
+            status="deactivated",
+            resets_left=resets_left
         )
         keys_data = await storage.get("keys", {})
         keys_data[key_id] = license_key.to_dict()
@@ -275,6 +281,32 @@ class KeyManager:
         
         if user_key in users_data:
             return hwid in users_data[user_key]["hwids"]
+        return False
+
+    @staticmethod
+    async def reset_key(key_id: str, unlimited_resets: bool = False) -> bool:
+        """Reset a license key: clear HWID, set status to deactivated, decrement resets_left unless unlimited."""
+        keys_data = await storage.get("keys", {})
+        if key_id in keys_data:
+            key_info = keys_data[key_id]
+            # Unlimited resets for owners/managers/exclusive
+            if not unlimited_resets:
+                if key_info.get("resets_left", 3) <= 0:
+                    return False
+                key_info["resets_left"] = key_info.get("resets_left", 3) - 1
+            # Clear HWID and deactivate
+            key_info["hwid"] = ""
+            key_info["status"] = "deactivated"
+            keys_data[key_id] = key_info
+            await storage.set("keys", keys_data)
+            # Also update user data
+            users_data = await storage.get("users", {})
+            user_id = str(key_info["user_id"])
+            if user_id in users_data and key_id in users_data[user_id]["keys"]:
+                users_data[user_id]["keys"][key_id]["hwid"] = ""
+                users_data[user_id]["keys"][key_id]["status"] = "deactivated"
+                await storage.set("users", users_data)
+            return True
         return False
 
 def is_owner(interaction: discord.Interaction) -> bool:
@@ -407,6 +439,17 @@ async def resolve_channel(guild, channel_input):
                 return channel
     return None
 
+# --- PATCH: Utility to safely respond to interactions ---
+def safe_send_response(interaction, *args, **kwargs):
+    try:
+        if not interaction.response.is_done():
+            return interaction.response.send_message(*args, **kwargs)
+        else:
+            return interaction.followup.send(*args, **kwargs)
+    except Exception:
+        # If both fail, ignore
+        pass
+
 class LicenseBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
@@ -435,10 +478,10 @@ class ASTDPanelView(discord.ui.View):
     @discord.ui.button(label="Manage Your ASTD License Key", style=discord.ButtonStyle.primary, custom_id="manage_astd_key")
     async def manage_astd_key(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await has_astd_access(interaction):
-            await interaction.response.send_message(
-                "You don't have the required role to manage ASTD keys.", ephemeral=True)
+            await safe_send_response(interaction, "You don't have the required role to manage ASTD keys.", ephemeral=True)
             return
-        await interaction.response.send_message(
+        await safe_send_response(
+            interaction,
             "Select an option to manage your ASTD license key:",
             view=ASTDOptionsView(),
             ephemeral=True
@@ -446,7 +489,7 @@ class ASTDPanelView(discord.ui.View):
 
 class ASTDOptionsView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)  # Permanent
         self.add_item(ASTDGenerateKeyButton())
         self.add_item(ASTDResetKeyButton())
         self.add_item(ASTDViewKeyButton())
@@ -456,13 +499,13 @@ class ASTDGenerateKeyButton(discord.ui.Button):
         super().__init__(label="Generate Key", style=discord.ButtonStyle.primary, custom_id="generate_astd_key")
     async def callback(self, interaction: discord.Interaction):
         if not await has_astd_access(interaction):
-            await interaction.response.send_message("You don't have the required role to generate ASTD keys.", ephemeral=True)
+            await safe_send_response(interaction, "You don't have the required role to generate ASTD keys.", ephemeral=True)
             return
         user = interaction.user
         user_keys = await KeyManager.get_user_keys(user.id)
         existing_keys = [k for k in user_keys if k.key_type == "ASTD" and not k.is_expired()]
         if existing_keys:
-            await interaction.response.send_message("You already have an active ASTD key.", ephemeral=True)
+            await safe_send_response(interaction, "You already have an active ASTD key.", ephemeral=True)
             return
         duration = "1y"
         days = parse_duration(duration)
@@ -479,31 +522,39 @@ class ASTDGenerateKeyButton(discord.ui.Button):
                 f"Keep this key safe and do not share it with others."
             )
             await user.send(embed=dm_embed)
-            await interaction.response.send_message("Key generated and sent to your DMs!", ephemeral=True)
+            await safe_send_response(interaction, "Key generated and sent to your DMs!", ephemeral=True)
         except discord.Forbidden:
-            await interaction.response.send_message("Could not DM you the key. Please check your DM settings.", ephemeral=True)
+            await safe_send_response(interaction, "Could not DM you the key. Please check your DM settings.", ephemeral=True)
 
 class ASTDResetKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Reset Key", style=discord.ButtonStyle.danger, custom_id="reset_astd_key")
     async def callback(self, interaction: discord.Interaction):
         if not await has_astd_access(interaction):
-            await interaction.response.send_message("You don't have the required role to reset ASTD keys.", ephemeral=True)
+            await safe_send_response(interaction, "You don't have the required role to reset ASTD keys.", ephemeral=True)
             return
         user = interaction.user
         user_keys = await KeyManager.get_user_keys(user.id)
         matching_keys = [k for k in user_keys if k.key_type == "ASTD"]
-        resets_left = 1  # You can implement a real counter if needed
         if not matching_keys:
-            await interaction.response.send_message("You don't have an ASTD key to reset.", ephemeral=True)
+            await safe_send_response(interaction, "You don't have an ASTD key to reset.", ephemeral=True)
             return
+        unlimited = is_owner(interaction) or await has_manager_role(interaction) or await has_exclusive_role(interaction)
+        reset_results = []
         for key in matching_keys:
-            await KeyManager.delete_key(key.key_id)
-        embed = create_embed(
-            "Key Reset",
-            f"Your ASTD license key has been reset. Contact an administrator for a new key.\nResets Left: {resets_left-1}"
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+            result = await KeyManager.reset_key(key.key_id, unlimited_resets=unlimited)
+            reset_results.append((key, result))
+        key = matching_keys[0]
+        updated_key = await KeyManager.get_key(key.key_id)
+        resets_left = "∞" if updated_key.resets_left >= 999999 else updated_key.resets_left
+        if reset_results[0][1]:
+            embed = create_embed(
+                "Key Reset",
+                f"Your ASTD license key has been reset. Resets Left: {resets_left}"
+            )
+        else:
+            embed = create_error_embed("No Resets Left", f"You have no resets left for this key.")
+        await safe_send_response(interaction, embed=embed, ephemeral=True)
 
 class ASTDViewKeyButton(discord.ui.Button):
     def __init__(self):
@@ -519,10 +570,10 @@ class ASTDViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have an ASTD key.", ephemeral=True)
             return
         key = matching_keys[0]
-        # --- PATCH: Show correct activation status ---
         status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
         hwid = key.hwid
+        resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your ASTD License Key",
             description=f"**License Key**\n`{key.key_id}`",
@@ -531,7 +582,7 @@ class ASTDViewKeyButton(discord.ui.Button):
         embed.add_field(name="\U0001F4DD Status", value=status, inline=True)
         embed.add_field(name="HWID", value=hwid, inline=True)
         embed.add_field(name="\U0001F551 Expiry", value=key.expires_at.strftime('%a %b %d %H:%M:%S %Y'), inline=True)
-        embed.add_field(name="Resets Left", value="1", inline=True)
+        embed.add_field(name="Resets Left", value=str(resets_left), inline=True)
         embed.set_footer(text="You are responsible for your own key! We will not replace it if you share it with others.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -542,10 +593,10 @@ class ALSPanelView(discord.ui.View):
     @discord.ui.button(label="Manage Your ALS License Key", style=discord.ButtonStyle.primary, custom_id="manage_als_key")
     async def manage_als_key(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await has_astd_access(interaction):
-            await interaction.response.send_message(
-                "You don't have the required role to manage ALS keys.", ephemeral=True)
+            await safe_send_response(interaction, "You don't have the required role to manage ALS keys.", ephemeral=True)
             return
-        await interaction.response.send_message(
+        await safe_send_response(
+            interaction,
             "Select an option to manage your ALS license key:",
             view=ALSOptionsView(),
             ephemeral=True
@@ -553,7 +604,7 @@ class ALSPanelView(discord.ui.View):
 
 class ALSOptionsView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)  # Permanent
         self.add_item(ALSGenerateKeyButton())
         self.add_item(ALSResetKeyButton())
         self.add_item(ALSViewKeyButton())
@@ -563,13 +614,13 @@ class ALSGenerateKeyButton(discord.ui.Button):
         super().__init__(label="Generate Key", style=discord.ButtonStyle.primary, custom_id="generate_als_key")
     async def callback(self, interaction: discord.Interaction):
         if not await has_astd_access(interaction):
-            await interaction.response.send_message("You don't have the required role to generate ALS keys.", ephemeral=True)
+            await safe_send_response(interaction, "You don't have the required role to generate ALS keys.", ephemeral=True)
             return
         user = interaction.user
         user_keys = await KeyManager.get_user_keys(user.id)
         existing_keys = [k for k in user_keys if k.key_type == "ALS" and not k.is_expired()]
         if existing_keys:
-            await interaction.response.send_message("You already have an active ALS key.", ephemeral=True)
+            await safe_send_response(interaction, "You already have an active ALS key.", ephemeral=True)
             return
         duration = "1y"
         days = parse_duration(duration)
@@ -586,31 +637,39 @@ class ALSGenerateKeyButton(discord.ui.Button):
                 f"Keep this key safe and do not share it with others."
             )
             await user.send(embed=dm_embed)
-            await interaction.response.send_message("Key generated and sent to your DMs!", ephemeral=True)
+            await safe_send_response(interaction, "Key generated and sent to your DMs!", ephemeral=True)
         except discord.Forbidden:
-            await interaction.response.send_message("Could not DM you the key. Please check your DM settings.", ephemeral=True)
+            await safe_send_response(interaction, "Could not DM you the key. Please check your DM settings.", ephemeral=True)
 
 class ALSResetKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Reset Key", style=discord.ButtonStyle.danger, custom_id="reset_als_key")
     async def callback(self, interaction: discord.Interaction):
         if not await has_astd_access(interaction):
-            await interaction.response.send_message("You don't have the required role to reset ALS keys.", ephemeral=True)
+            await safe_send_response(interaction, "You don't have the required role to reset ALS keys.", ephemeral=True)
             return
         user = interaction.user
         user_keys = await KeyManager.get_user_keys(user.id)
         matching_keys = [k for k in user_keys if k.key_type == "ALS"]
-        resets_left = 1  # You can implement a real counter if needed
         if not matching_keys:
-            await interaction.response.send_message("You don't have an ALS key to reset.", ephemeral=True)
+            await safe_send_response(interaction, "You don't have an ALS key to reset.", ephemeral=True)
             return
+        unlimited = is_owner(interaction) or await has_manager_role(interaction) or await has_exclusive_role(interaction)
+        reset_results = []
         for key in matching_keys:
-            await KeyManager.delete_key(key.key_id)
-        embed = create_embed(
-            "Key Reset",
-            f"Your ALS license key has been reset. Contact an administrator for a new key.\nResets Left: {resets_left-1}"
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+            result = await KeyManager.reset_key(key.key_id, unlimited_resets=unlimited)
+            reset_results.append((key, result))
+        key = matching_keys[0]
+        updated_key = await KeyManager.get_key(key.key_id)
+        resets_left = "∞" if updated_key.resets_left >= 999999 else updated_key.resets_left
+        if reset_results[0][1]:
+            embed = create_embed(
+                "Key Reset",
+                f"Your ALS license key has been reset. Resets Left: {resets_left}"
+            )
+        else:
+            embed = create_error_embed("No Resets Left", f"You have no resets left for this key.")
+        await safe_send_response(interaction, embed=embed, ephemeral=True)
 
 class ALSViewKeyButton(discord.ui.Button):
     def __init__(self):
@@ -626,10 +685,10 @@ class ALSViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have an ALS key.", ephemeral=True)
             return
         key = matching_keys[0]
-        # --- PATCH: Show correct activation status ---
         status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
         hwid = key.hwid
+        resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your ALS License Key",
             description=f"**License Key**\n`{key.key_id}`",
@@ -638,7 +697,7 @@ class ALSViewKeyButton(discord.ui.Button):
         embed.add_field(name="\U0001F4DD Status", value=status, inline=True)
         embed.add_field(name="HWID", value=hwid, inline=True)
         embed.add_field(name="\U0001F551 Expiry", value=key.expires_at.strftime('%a %b %d %H:%M:%S %Y'), inline=True)
-        embed.add_field(name="Resets Left", value="1", inline=True)
+        embed.add_field(name="Resets Left", value=str(resets_left), inline=True)
         embed.set_footer(text="You are responsible for your own key! We will not replace it if you share it with others.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -721,9 +780,14 @@ async def help_command(interaction: discord.Interaction):
     try:
         is_admin = await has_key_role(interaction)
         owner = is_owner(interaction)
-        exclusive = await has_exclusive_role(interaction)
-        manager = await has_manager_role(interaction)
-        # Manager/exclusive take priority
+        try:
+            exclusive = await has_exclusive_role(interaction)
+        except Exception:
+            exclusive = False
+        try:
+            manager = await has_manager_role(interaction)
+        except Exception:
+            manager = False
         access_level = "Exclusive" if exclusive else ("Manager" if manager else ("Owner" if owner else ("Admin" if is_admin else "User")))
         embed = discord.Embed(
             title="\U0001F511 License Bot Commands",
@@ -787,11 +851,11 @@ async def help_command(interaction: discord.Interaction):
         )
         embed.timestamp = datetime.now()
         embed.set_footer(text="Use commands with /")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await safe_send_response(interaction, embed=embed, ephemeral=True)
     except Exception as e:
         logger.error(f"Error in help command: {e}")
         embed = create_error_embed("Error", "An error occurred while showing help.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await safe_send_response(interaction, embed=embed, ephemeral=True)
 
 # Update /manage_key to allow exclusive/manager bypass
 @bot.tree.command(name="manage_key", description="View or reset your AV/ASTD/ALS license key")
@@ -819,6 +883,7 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
             key = matching_keys[0]
             status = "Expired" if key.is_expired() else "Active"
             days_left = key.days_until_expiry()
+            resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
             embed = create_embed(
                 f"{key_type} License Key",
                 f"**Key ID:** `{key_type}-{key.key_id}`\n"
@@ -827,7 +892,8 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
                 f"**HWID:** `{key.hwid}`\n"
                 f"**Created:** {key.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
                 f"**Expires:** {key.expires_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"**Activation Status:** {key.status.title()}"
+                f"**Activation Status:** {key.status.title()}\n"
+                f"**Resets Left:** {resets_left}"
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
         elif action == "reset":
@@ -835,12 +901,21 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
                 embed = create_error_embed("Permission Denied", "You don't have permission to reset keys.")
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
+            unlimited = is_owner(interaction) or manager or exclusive
+            reset_results = []
             for key in matching_keys:
-                await KeyManager.delete_key(key.key_id)
-            embed = create_embed(
-                "Key Reset",
-                f"Your {key_type} license key has been reset. Contact an administrator for a new key."
-            )
+                result = await KeyManager.reset_key(key.key_id, unlimited_resets=unlimited)
+                reset_results.append((key, result))
+            key = matching_keys[0]
+            updated_key = await KeyManager.get_key(key.key_id)
+            resets_left = "∞" if updated_key.resets_left >= 999999 else updated_key.resets_left
+            if reset_results[0][1]:
+                embed = create_embed(
+                    "Key Reset",
+                    f"Your {key_type} license key has been reset. Resets Left: {resets_left}"
+                )
+            else:
+                embed = create_error_embed("No Resets Left", f"You have no resets left for this key.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
     except Exception as e:
         logger.error(f"Error in manage_key: {e}")
@@ -1319,13 +1394,13 @@ async def setup_key_message(
     try:
         if not await has_astd_access(interaction):
             embed = create_error_embed("Permission Denied", "You don't have permission to use this command.")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_send_response(interaction, embed=embed, ephemeral=True)
             return
         sent = []
         if astd_channel:
             resolved_astd_channel = await resolve_channel(interaction.guild, astd_channel)
             if not resolved_astd_channel:
-                await interaction.response.send_message(f"Could not find channel for input: {astd_channel}", ephemeral=True)
+                await safe_send_response(interaction, f"Could not find channel for input: {astd_channel}", ephemeral=True)
                 return
             astd_embed = discord.Embed(
                 title="\U0001F511 ASTD License Key Management",
@@ -1346,7 +1421,7 @@ async def setup_key_message(
         if als_channel:
             resolved_als_channel = await resolve_channel(interaction.guild, als_channel)
             if not resolved_als_channel:
-                await interaction.response.send_message(f"Could not find channel for input: {als_channel}", ephemeral=True)
+                await safe_send_response(interaction, f"Could not find channel for input: {als_channel}", ephemeral=True)
                 return
             als_embed = discord.Embed(
                 title="\U0001F511 ALS License Key Management",
@@ -1365,13 +1440,13 @@ async def setup_key_message(
             await resolved_als_channel.send(embed=als_embed, view=ALSPanelView())
             sent.append(f"ALS panel sent to {resolved_als_channel.mention}")
         if sent:
-            await interaction.response.send_message("\n".join(sent), ephemeral=True)
+            await safe_send_response(interaction, "\n".join(sent), ephemeral=True)
         else:
-            await interaction.response.send_message("No channel specified.", ephemeral=True)
+            await safe_send_response(interaction, "No channel specified.", ephemeral=True)
     except Exception as e:
         logger.error(f"Error in setup_key_message: {e}")
         embed = create_error_embed("Error", "An error occurred while setting up the key message panel.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await safe_send_response(interaction, embed=embed, ephemeral=True)
 
 @bot.tree.command(name="delete_all_key", description="Delete all keys for a user (Owner only) :warning:")
 @app_commands.describe(user="User to delete all keys for")
