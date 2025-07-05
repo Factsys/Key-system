@@ -304,7 +304,11 @@ async def has_key_role(interaction: discord.Interaction) -> bool:
 def has_astd_bypass_role(interaction: discord.Interaction) -> bool:
     """Bypass for ASTD role ID 1378078542457344061"""
     if hasattr(interaction, 'guild') and interaction.guild:
-        member = interaction.guild.get_member(interaction.user.id)
+        # Always fetch up-to-date member object
+        try:
+            member = await interaction.guild.fetch_member(interaction.user.id)
+        except Exception:
+            member = interaction.guild.get_member(interaction.user.id)
         if member and member.roles:
             return any(role.id == 1378078542457344061 for role in member.roles)
     return False
@@ -313,7 +317,7 @@ def has_astd_bypass_role(interaction: discord.Interaction) -> bool:
 async def has_astd_access(interaction: discord.Interaction) -> bool:
     if is_owner(interaction):
         return True
-    if has_astd_bypass_role(interaction):
+    if await has_astd_bypass_role(interaction):
         return True
     if await has_exclusive_role(interaction):
         return True
@@ -321,7 +325,10 @@ async def has_astd_access(interaction: discord.Interaction) -> bool:
         return True
     # Fallback to legacy role check
     if ROLE_IDS and hasattr(interaction, 'guild') and interaction.guild:
-        member = interaction.guild.get_member(interaction.user.id)
+        try:
+            member = await interaction.guild.fetch_member(interaction.user.id)
+        except Exception:
+            member = interaction.guild.get_member(interaction.user.id)
         if member and member.roles:
             user_role_ids = [role.id for role in member.roles]
             if any(role_id in user_role_ids for role_id in ROLE_IDS):
@@ -678,6 +685,26 @@ def check_key():
         }
         return jsonify(resp)
     return jsonify({"valid": False})
+
+@app.route("/activate", methods=["POST"])
+def activate_key_api():
+    data = request.get_json()
+    key = data.get("key", "")
+    hwid = data.get("hwid", "")
+    keys_data = storage.data.get("keys", {})
+    if key in keys_data:
+        key_info = keys_data[key]
+        # Only allow activation if not already activated and HWID matches
+        if key_info.get("status", "deactivated") != "activated" and hwid == key_info.get("hwid", ""):
+            key_info["status"] = "activated"
+            keys_data[key] = key_info
+            storage.save_sync(storage.data)
+            return jsonify({"success": True, "message": "Key activated."})
+        elif key_info.get("status", "deactivated") == "activated":
+            return jsonify({"success": True, "message": "Key already activated."})
+        else:
+            return jsonify({"success": False, "message": "HWID mismatch or invalid activation."})
+    return jsonify({"success": False, "message": "Key not found."})
 
 def run_web():
     port = int(os.getenv("PORT", 8080))
