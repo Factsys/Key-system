@@ -1402,50 +1402,58 @@ async def setup_key_message(
             if not resolved_astd_channel:
                 await safe_send_response(interaction, f"Could not find channel for input: {astd_channel}", ephemeral=True)
                 return
-            astd_embed = discord.Embed(
-                title="\U0001F511 ASTD License Key Management",
-                description=(
-                    "Manage your license key for ASTD\n\n"
-                    "**Available Options**\n"
-                    "• Generate a new license key\n"
-                    "• Reset your existing key (Only once)\n"
-                    "• View your current key details\n\n"
-                    "**Requirements**\n"
-                    "You must have the **Mango Premium** role to use these features.\n\n"
-                    "Click the button below to manage your ASTD license key"
-                ),
-                color=0xFEE75C
-            )
-            await resolved_astd_channel.send(embed=astd_embed, view=ASTDPanelView())
-            sent.append(f"ASTD panel sent to {resolved_astd_channel.mention}")
+            try:
+                astd_embed = discord.Embed(
+                    title="\U0001F511 ASTD License Key Management",
+                    description=(
+                        "Manage your license key for ASTD\n\n"
+                        "**Available Options**\n"
+                        "• Generate a new license key\n"
+                        "• Reset your existing key (Only once)\n"
+                        "• View your current key details\n\n"
+                        "**Requirements**\n"
+                        "You must have the **Mango Premium** role to use these features.\n\n"
+                        "Click the button below to manage your ASTD license key"
+                    ),
+                    color=0xFEE75C
+                )
+                await resolved_astd_channel.send(embed=astd_embed, view=ASTDPanelView())
+                sent.append(f"ASTD panel sent to {resolved_astd_channel.mention}")
+            except Exception as e:
+                await safe_send_response(interaction, f"Failed to send ASTD panel: {e}", ephemeral=True)
+                return
         if als_channel:
             resolved_als_channel = await resolve_channel(interaction.guild, als_channel)
             if not resolved_als_channel:
                 await safe_send_response(interaction, f"Could not find channel for input: {als_channel}", ephemeral=True)
                 return
-            als_embed = discord.Embed(
-                title="\U0001F511 ALS License Key Management",
-                description=(
-                    "Manage your license key for ALS\n\n"
-                    "**Available Options**\n"
-                    "• Generate a new license key\n"
-                    "• Reset your existing key (Only once)\n"
-                    "• View your current key details\n\n"
-                    "**Requirements**\n"
-                    "You must have the **Mango Premium** role to use these features.\n\n"
-                    "Click the button below to manage your ALS license key"
-                ),
-                color=0xFEE75C
-            )
-            await resolved_als_channel.send(embed=als_embed, view=ALSPanelView())
-            sent.append(f"ALS panel sent to {resolved_als_channel.mention}")
+            try:
+                als_embed = discord.Embed(
+                    title="\U0001F511 ALS License Key Management",
+                    description=(
+                        "Manage your license key for ALS\n\n"
+                        "**Available Options**\n"
+                        "• Generate a new license key\n"
+                        "• Reset your existing key (Only once)\n"
+                        "• View your current key details\n\n"
+                        "**Requirements**\n"
+                        "You must have the **Mango Premium** role to use these features.\n\n"
+                        "Click the button below to manage your ALS license key"
+                    ),
+                    color=0xFEE75C
+                )
+                await resolved_als_channel.send(embed=als_embed, view=ALSPanelView())
+                sent.append(f"ALS panel sent to {resolved_als_channel.mention}")
+            except Exception as e:
+                await safe_send_response(interaction, f"Failed to send ALS panel: {e}", ephemeral=True)
+                return
         if sent:
             await safe_send_response(interaction, "\n".join(sent), ephemeral=True)
         else:
             await safe_send_response(interaction, "No channel specified.", ephemeral=True)
     except Exception as e:
         logger.error(f"Error in setup_key_message: {e}")
-        embed = create_error_embed("Error", "An error occurred while setting up the key message panel.")
+        embed = create_error_embed("Error", f"An error occurred while setting up the key message panel.\nError: {e}")
         await safe_send_response(interaction, embed=embed, ephemeral=True)
 
 @bot.tree.command(name="delete_all_key", description="Delete all keys for a user (Owner only) :warning:")
