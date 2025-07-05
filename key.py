@@ -301,7 +301,7 @@ async def has_key_role(interaction: discord.Interaction) -> bool:
     return False
 
 # --- PATCH: Add hardcoded role check for ASTD access ---
-def has_astd_bypass_role(interaction: discord.Interaction) -> bool:
+async def has_astd_bypass_role(interaction: discord.Interaction) -> bool:
     """Bypass for ASTD role ID 1378078542457344061"""
     if hasattr(interaction, 'guild') and interaction.guild:
         # Always fetch up-to-date member object
