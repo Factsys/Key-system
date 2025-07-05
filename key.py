@@ -653,15 +653,11 @@ def home():
 def check_key():
     data = request.get_json()
     key = data.get("key", "")
-    hwid = data.get("hwid", "")
+    # Ignore HWID for all checks
     keys_data = storage.data.get("keys", {})
     if key in keys_data:
         key_info = keys_data[key]
-        # If key is activated, require HWID match
-        if key_info.get("status", "deactivated") == "activated":
-            if hwid and hwid != key_info.get("hwid", ""):
-                return jsonify({"valid": False, "reason": "HWID mismatch"})
-        # Calculate days left
+        # No HWID check at all
         try:
             expires_at = datetime.fromisoformat(key_info["expires_at"])
             if expires_at.year >= 9999:
