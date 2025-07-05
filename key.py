@@ -168,15 +168,31 @@ class KeyManager:
 
     @staticmethod
     async def create_key(key_type: str, user_id: int, hwid: str, duration_days: int, name: str = "", resets_left: int = None, unlimited_resets: bool = False) -> LicenseKey:
+        users_data = await storage.get("users", {})
+        user_key = str(user_id)
+        # --- PATCH: Check resets_left for this user/key_type ---
+        if not unlimited_resets:
+            if user_key in users_data:
+                resets_info = users_data[user_key].get("resets_left", {})
+                resets_left_for_type = resets_info.get(key_type, 3)
+                if resets_left_for_type <= 0:
+                    raise Exception(f"No resets left for {key_type} key.")
+        # ...existing code for key creation...
         key_id = KeyManager.generate_key(key_type, user_id, hwid)
         if duration_days == 0:
             expires_at = datetime(year=9999, month=12, day=31)
         else:
             expires_at = datetime.now() + timedelta(days=duration_days)
         created_at = datetime.now()
-        # Set resets_left: 3 for users, or unlimited (999999) for owners/managers/exclusive
         if resets_left is None:
-            resets_left = 999999 if unlimited_resets else 3
+            if not unlimited_resets:
+                if user_key in users_data:
+                    resets_info = users_data[user_key].get("resets_left", {})
+                    resets_left = resets_info.get(key_type, 3)
+                else:
+                    resets_left = 3
+            else:
+                resets_left = 999999
         license_key = LicenseKey(
             key_id=key_id,
             key_type=key_type,
@@ -191,10 +207,8 @@ class KeyManager:
         keys_data = await storage.get("keys", {})
         keys_data[key_id] = license_key.to_dict()
         await storage.set("keys", keys_data)
-        users_data = await storage.get("users", {})
-        user_key = str(user_id)
         if user_key not in users_data:
-            users_data[user_key] = {"discord_id": user_id, "keys": {}, "hwids": []}
+            users_data[user_key] = {"discord_id": user_id, "keys": {}, "hwids": [], "resets_left": {}}
         users_data[user_key]["keys"][key_id] = {
             "key_type": key_type,
             "expires_at": expires_at.isoformat(),
@@ -203,6 +217,13 @@ class KeyManager:
         }
         if hwid not in users_data[user_key]["hwids"]:
             users_data[user_key]["hwids"].append(hwid)
+        # --- PATCH: Save resets_left for this key_type ---
+        if "resets_left" not in users_data[user_key]:
+            users_data[user_key]["resets_left"] = {}
+        if not unlimited_resets:
+            users_data[user_key]["resets_left"].setdefault(key_type, resets_left)
+        else:
+            users_data[user_key]["resets_left"][key_type] = 999999
         await storage.set("users", users_data)
         logger.info(f"Created {key_type} key {key_id} for user {user_id}")
         return license_key
@@ -285,28 +306,23 @@ class KeyManager:
 
     @staticmethod
     async def reset_key(key_id: str, unlimited_resets: bool = False) -> bool:
-        """Reset a license key: clear HWID, set status to deactivated, decrement resets_left unless unlimited. Update both keys and users storage."""
+        """Reset a license key: delete the key and decrement resets_left for the user/key_type."""
         keys_data = await storage.get("keys", {})
         if key_id in keys_data:
             key_info = keys_data[key_id]
-            # Unlimited resets for owners/managers/exclusive
-            if not unlimited_resets:
-                if key_info.get("resets_left", 3) <= 0:
-                    return False
-                key_info["resets_left"] = key_info.get("resets_left", 3) - 1
-            # Clear HWID and deactivate
-            key_info["hwid"] = ""
-            key_info["status"] = "deactivated"
-            keys_data[key_id] = key_info
-            await storage.set("keys", keys_data)
-            # Also update user data
-            users_data = await storage.get("users", {})
             user_id = str(key_info["user_id"])
+            key_type = key_info["key_type"]
+            # Remove from keys
+            del keys_data[key_id]
+            await storage.set("keys", keys_data)
+            # Remove from users
+            users_data = await storage.get("users", {})
             if user_id in users_data and key_id in users_data[user_id]["keys"]:
-                users_data[user_id]["keys"][key_id]["hwid"] = ""
-                users_data[user_id]["keys"][key_id]["status"] = "deactivated"
-                # PATCH: update resets_left in user key as well
-                users_data[user_id]["keys"][key_id]["resets_left"] = key_info["resets_left"]
+                del users_data[user_id]["keys"][key_id]
+                # --- PATCH: Decrement resets_left for this key_type ---
+                if not unlimited_resets:
+                    resets_info = users_data[user_id].setdefault("resets_left", {})
+                    resets_info[key_type] = max(0, resets_info.get(key_type, 3) - 1)
                 await storage.set("users", users_data)
             return True
         return False
