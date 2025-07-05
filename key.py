@@ -481,7 +481,7 @@ class ASTDGenerateKeyButton(discord.ui.Button):
             dm_embed = create_embed(
                 f"New ASTD License Key",
                 f"You have been granted a new ASTD license key.\n\n"
-                f"**Key ID:** `ASTD-{license_key.key_id}`\n"
+                f"**Key ID:** `{license_key.key_id}`\n"
                 f"**Duration:** {duration}\n"
                 f"**Expires:** {expires_str}\n\n"
                 f"Keep this key safe and do not share it with others."
@@ -532,7 +532,7 @@ class ASTDViewKeyButton(discord.ui.Button):
         hwid = key.hwid
         embed = discord.Embed(
             title="\U0001F511 Your ASTD License Key",
-            description=f"**License Key**\n`ASTD-{key.key_id}`",
+            description=f"**License Key**\n`{key.key_id}`",
             color=0x00ff00
         )
         embed.add_field(name="\U0001F4DD Status", value=status, inline=True)
@@ -587,7 +587,7 @@ class ALSGenerateKeyButton(discord.ui.Button):
             dm_embed = create_embed(
                 f"New ALS License Key",
                 f"You have been granted a new ALS license key.\n\n"
-                f"**Key ID:** `ALS-{license_key.key_id}`\n"
+                f"**Key ID:** `{license_key.key_id}`\n"
                 f"**Duration:** {duration}\n"
                 f"**Expires:** {expires_str}\n\n"
                 f"Keep this key safe and do not share it with others."
@@ -638,7 +638,7 @@ class ALSViewKeyButton(discord.ui.Button):
         hwid = key.hwid
         embed = discord.Embed(
             title="\U0001F511 Your ALS License Key",
-            description=f"**License Key**\n`ALS-{key.key_id}`",
+            description=f"**License Key**\n`{key.key_id}`",
             color=0x00ff00
         )
         embed.add_field(name="\U0001F4DD Status", value=status, inline=True)
@@ -659,10 +659,38 @@ def home():
 def check_key():
     data = request.get_json()
     key = data.get("key", "")
-    # Check if the key exists in your storage
+    hwid = data.get("hwid", "")
     keys_data = storage.data.get("keys", {})
-    valid = key in keys_data
-    return jsonify({"valid": valid})
+    if key in keys_data:
+        key_info = keys_data[key]
+        # If key is activated, require HWID match
+        if key_info.get("status", "deactivated") == "activated":
+            if hwid and hwid != key_info.get("hwid", ""):
+                return jsonify({"valid": False, "reason": "HWID mismatch"})
+        # Calculate days left
+        try:
+            expires_at = datetime.fromisoformat(key_info["expires_at"])
+            if expires_at.year >= 9999:
+                days_left = '∞'
+            else:
+                delta = expires_at - datetime.now()
+                days_left = delta.days
+        except Exception:
+            days_left = None
+        resp = {
+            "valid": True,
+            "key_id": key_info.get("key_id", key),
+            "key_type": key_info.get("key_type", ""),
+            "user_id": key_info.get("user_id", ""),
+            "hwid": key_info.get("hwid", ""),
+            "status": key_info.get("status", "deactivated"),
+            "expires_at": key_info.get("expires_at", ""),
+            "created_at": key_info.get("created_at", ""),
+            "name": key_info.get("name", ""),
+            "days_left": days_left
+        }
+        return jsonify(resp)
+    return jsonify({"valid": False})
 
 def run_web():
     port = int(os.getenv("PORT", 8080))
