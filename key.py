@@ -285,7 +285,7 @@ class KeyManager:
 
     @staticmethod
     async def reset_key(key_id: str, unlimited_resets: bool = False) -> bool:
-        """Reset a license key: clear HWID, set status to deactivated, decrement resets_left unless unlimited."""
+        """Reset a license key: clear HWID, set status to deactivated, decrement resets_left unless unlimited. Update both keys and users storage."""
         keys_data = await storage.get("keys", {})
         if key_id in keys_data:
             key_info = keys_data[key_id]
@@ -305,6 +305,8 @@ class KeyManager:
             if user_id in users_data and key_id in users_data[user_id]["keys"]:
                 users_data[user_id]["keys"][key_id]["hwid"] = ""
                 users_data[user_id]["keys"][key_id]["status"] = "deactivated"
+                # PATCH: update resets_left in user key as well
+                users_data[user_id]["keys"][key_id]["resets_left"] = key_info["resets_left"]
                 await storage.set("users", users_data)
             return True
         return False
@@ -544,6 +546,7 @@ class ASTDResetKeyButton(discord.ui.Button):
         for key in matching_keys:
             result = await KeyManager.reset_key(key.key_id, unlimited_resets=unlimited)
             reset_results.append((key, result))
+        # Always fetch the updated key from storage
         key = matching_keys[0]
         updated_key = await KeyManager.get_key(key.key_id)
         resets_left = "∞" if updated_key.resets_left >= 999999 else updated_key.resets_left
@@ -906,6 +909,7 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
             for key in matching_keys:
                 result = await KeyManager.reset_key(key.key_id, unlimited_resets=unlimited)
                 reset_results.append((key, result))
+            # Always fetch the updated key from storage
             key = matching_keys[0]
             updated_key = await KeyManager.get_key(key.key_id)
             resets_left = "∞" if updated_key.resets_left >= 999999 else updated_key.resets_left
