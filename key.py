@@ -284,23 +284,20 @@ async def has_key_role(interaction: discord.Interaction) -> bool:
     """Check if user has the key management role"""
     if is_owner(interaction):
         return True
-    
+    # Always get up-to-date member object
+    member = None
+    if hasattr(interaction, 'guild') and interaction.guild:
+        member = await interaction.guild.fetch_member(interaction.user.id)
     # Check if user has any of the configured role IDs
-    if ROLE_IDS and hasattr(interaction, 'guild') and interaction.guild:
-        member = interaction.guild.get_member(interaction.user.id)
-        if member and member.roles:
-            user_role_ids = [role.id for role in member.roles]
-            if any(role_id in user_role_ids for role_id in ROLE_IDS):
-                return True
-    
+    if ROLE_IDS and member and member.roles:
+        user_role_ids = [role.id for role in member.roles]
+        if any(role_id in user_role_ids for role_id in ROLE_IDS):
+            return True
     # Legacy role name check
     key_role_name = await storage.get("key_role", "KeyManager")
-    if hasattr(interaction, 'guild') and interaction.guild:
-        member = interaction.guild.get_member(interaction.user.id)
-        if member and member.roles:
-            user_roles = [role.name for role in member.roles]
-            return key_role_name in user_roles
-    
+    if member and member.roles:
+        user_roles = [role.name for role in member.roles]
+        return key_role_name in user_roles
     return False
 
 # Only allow this role or owners
