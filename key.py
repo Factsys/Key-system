@@ -300,32 +300,20 @@ async def has_key_role(interaction: discord.Interaction) -> bool:
         return key_role_name in user_roles
     return False
 
-# Only allow this role or owners
-ASTD_ROLE_ID = 1378078542457344061
-EXCLUSIVE_ROLE_IDS = []  # Will be set by /exclus
-MANAGER_ROLE_IDS = []    # Will be set by /managerrole
-
-# Helper to check for exclusive role
-async def has_exclusive_role(interaction: discord.Interaction) -> bool:
+# --- PATCH: Add hardcoded role check for ASTD access ---
+def has_astd_bypass_role(interaction: discord.Interaction) -> bool:
+    """Bypass for ASTD role ID 1378078542457344061"""
     if hasattr(interaction, 'guild') and interaction.guild:
         member = interaction.guild.get_member(interaction.user.id)
         if member and member.roles:
-            user_role_ids = [role.id for role in member.roles]
-            return any(role_id in user_role_ids for role_id in EXCLUSIVE_ROLE_IDS)
+            return any(role.id == 1378078542457344061 for role in member.roles)
     return False
 
-# Helper to check for manager role
-async def has_manager_role(interaction: discord.Interaction) -> bool:
-    if hasattr(interaction, 'guild') and interaction.guild:
-        member = interaction.guild.get_member(interaction.user.id)
-        if member and member.roles:
-            user_role_ids = [role.id for role in member.roles]
-            return any(role_id in user_role_ids for role_id in MANAGER_ROLE_IDS)
-    return False
-
-# Updated access check for ASTD/ALS (fix: always check manager/exclusive first)
+# Updated access check for ASTD/ALS (fix: always check manager/exclusive/hardcoded first)
 async def has_astd_access(interaction: discord.Interaction) -> bool:
     if is_owner(interaction):
+        return True
+    if has_astd_bypass_role(interaction):
         return True
     if await has_exclusive_role(interaction):
         return True
@@ -338,7 +326,7 @@ async def has_astd_access(interaction: discord.Interaction) -> bool:
             user_role_ids = [role.id for role in member.roles]
             if any(role_id in user_role_ids for role_id in ROLE_IDS):
                 return True
-    # Fallback to hardcoded ASTD_ROLE_ID
+    # Fallback to hardcoded ASTD_ROLE_ID (legacy)
     if hasattr(interaction, 'guild') and interaction.guild:
         member = interaction.guild.get_member(interaction.user.id)
         if member and member.roles:
@@ -524,7 +512,8 @@ class ASTDViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have an ASTD key.", ephemeral=True)
             return
         key = matching_keys[0]
-        status = "Activated" if key.status == "activated" else "Deactivated"
+        # --- PATCH: Show correct activation status ---
+        status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
         hwid = key.hwid
         embed = discord.Embed(
@@ -630,7 +619,8 @@ class ALSViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have an ALS key.", ephemeral=True)
             return
         key = matching_keys[0]
-        status = "Activated" if key.status == "activated" else "Deactivated"
+        # --- PATCH: Show correct activation status ---
+        status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
         hwid = key.hwid
         embed = discord.Embed(
