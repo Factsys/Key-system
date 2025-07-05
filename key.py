@@ -107,7 +107,7 @@ storage = Storage()
 
 class LicenseKey:
     def __init__(self, key_id: str, key_type: str, user_id: int, hwid: str, 
-                 expires_at: datetime, created_at: datetime, name: str = ""):
+                 expires_at: datetime, created_at: datetime, name: str = "", status: str = "deactivated"):
         self.key_id = key_id
         self.key_type = key_type
         self.user_id = user_id
@@ -115,6 +115,7 @@ class LicenseKey:
         self.expires_at = expires_at
         self.created_at = created_at
         self.name = name
+        self.status = status  # "activated" or "deactivated"
 
     def to_dict(self):
         return {
@@ -124,7 +125,8 @@ class LicenseKey:
             "hwid": self.hwid,
             "expires_at": self.expires_at.isoformat(),
             "created_at": self.created_at.isoformat(),
-            "name": self.name
+            "name": self.name,
+            "status": self.status
         }
 
     @classmethod
@@ -136,7 +138,8 @@ class LicenseKey:
             hwid=data["hwid"],
             expires_at=datetime.fromisoformat(data["expires_at"]),
             created_at=datetime.fromisoformat(data["created_at"]),
-            name=data.get("name", "")
+            name=data.get("name", ""),
+            status=data.get("status", "deactivated")
         )
 
     def is_expired(self):
@@ -168,6 +171,7 @@ class KeyManager:
         else:
             expires_at = datetime.now() + timedelta(days=duration_days)
         created_at = datetime.now()
+        # Set status to deactivated by default
         license_key = LicenseKey(
             key_id=key_id,
             key_type=key_type,
@@ -175,7 +179,8 @@ class KeyManager:
             hwid=hwid,
             expires_at=expires_at,
             created_at=created_at,
-            name=name
+            name=name,
+            status="deactivated"
         )
         keys_data = await storage.get("keys", {})
         keys_data[key_id] = license_key.to_dict()
@@ -187,13 +192,28 @@ class KeyManager:
         users_data[user_key]["keys"][key_id] = {
             "key_type": key_type,
             "expires_at": expires_at.isoformat(),
-            "hwid": hwid
+            "hwid": hwid,
+            "status": "deactivated"
         }
         if hwid not in users_data[user_key]["hwids"]:
             users_data[user_key]["hwids"].append(hwid)
         await storage.set("users", users_data)
         logger.info(f"Created {key_type} key {key_id} for user {user_id}")
         return license_key
+
+    @staticmethod
+    async def activate_key(key_id: str) -> bool:
+        keys_data = await storage.get("keys", {})
+        if key_id in keys_data:
+            keys_data[key_id]["status"] = "activated"
+            await storage.set("keys", keys_data)
+            users_data = await storage.get("users", {})
+            user_id = str(keys_data[key_id]["user_id"])
+            if user_id in users_data and key_id in users_data[user_id]["keys"]:
+                users_data[user_id]["keys"][key_id]["status"] = "activated"
+                await storage.set("users", users_data)
+            return True
+        return False
 
     @staticmethod
     async def get_key(key_id: str) -> Optional[LicenseKey]:
@@ -210,15 +230,15 @@ class KeyManager:
         if key_id in keys_data:
             key_info = keys_data[key_id]
             user_id = str(key_info["user_id"])
-
+            
             del keys_data[key_id]
             await storage.set("keys", keys_data)
-
+            
             users_data = await storage.get("users", {})
             if user_id in users_data and key_id in users_data[user_id]["keys"]:
                 del users_data[user_id]["keys"][key_id]
                 await storage.set("users", users_data)
-
+            
             logger.info(f"Deleted key {key_id}")
             return True
         return False
@@ -228,11 +248,11 @@ class KeyManager:
         """Get all keys for a user"""
         keys_data = await storage.get("keys", {})
         user_keys = []
-
+        
         for key_id, key_info in keys_data.items():
             if key_info["user_id"] == user_id:
                 user_keys.append(LicenseKey.from_dict(key_info))
-
+        
         return user_keys
 
     @staticmethod
@@ -240,11 +260,11 @@ class KeyManager:
         """Get all keys of a specific type"""
         keys_data = await storage.get("keys", {})
         type_keys = []
-
+        
         for key_id, key_info in keys_data.items():
             if key_info["key_type"] == key_type:
                 type_keys.append(LicenseKey.from_dict(key_info))
-
+        
         return type_keys
 
     @staticmethod
@@ -252,7 +272,7 @@ class KeyManager:
         """Validate if HWID belongs to user"""
         users_data = await storage.get("users", {})
         user_key = str(user_id)
-
+        
         if user_key in users_data:
             return hwid in users_data[user_key]["hwids"]
         return False
@@ -264,7 +284,7 @@ async def has_key_role(interaction: discord.Interaction) -> bool:
     """Check if user has the key management role"""
     if is_owner(interaction):
         return True
-
+    
     # Check if user has any of the configured role IDs
     if ROLE_IDS and hasattr(interaction, 'guild') and interaction.guild:
         member = interaction.guild.get_member(interaction.user.id)
@@ -272,40 +292,48 @@ async def has_key_role(interaction: discord.Interaction) -> bool:
             user_role_ids = [role.id for role in member.roles]
             if any(role_id in user_role_ids for role_id in ROLE_IDS):
                 return True
-
-    # Check role name from storage (for roles set via /keyrole)
+    
+    # Legacy role name check
     key_role_name = await storage.get("key_role", "KeyManager")
     if hasattr(interaction, 'guild') and interaction.guild:
         member = interaction.guild.get_member(interaction.user.id)
         if member and member.roles:
             user_roles = [role.name for role in member.roles]
-            if key_role_name in user_roles:
-                return True
-
-    # Check exclusive roles from storage (for roles set via /exclus)
-    settings = await storage.get("settings", {})
-    exclusive_roles = settings.get("exclusive_roles", [])
-    if exclusive_roles and hasattr(interaction, 'guild') and interaction.guild:
-        member = interaction.guild.get_member(interaction.user.id)
-        if member and member.roles:
-            user_role_ids = [role.id for role in member.roles]
-            if any(role_id in user_role_ids for role_id in exclusive_roles):
-                return True
-
+            return key_role_name in user_roles
+    
     return False
 
 # Only allow this role or owners
 ASTD_ROLE_ID = 1378078542457344061
+EXCLUSIVE_ROLE_IDS = []  # Will be set by /exclus
+MANAGER_ROLE_IDS = []    # Will be set by /managerrole
 
+# Helper to check for exclusive role
+async def has_exclusive_role(interaction: discord.Interaction) -> bool:
+    if hasattr(interaction, 'guild') and interaction.guild:
+        member = interaction.guild.get_member(interaction.user.id)
+        if member and member.roles:
+            user_role_ids = [role.id for role in member.roles]
+            return any(role_id in user_role_ids for role_id in EXCLUSIVE_ROLE_IDS)
+    return False
+
+# Helper to check for manager role
+async def has_manager_role(interaction: discord.Interaction) -> bool:
+    if hasattr(interaction, 'guild') and interaction.guild:
+        member = interaction.guild.get_member(interaction.user.id)
+        if member and member.roles:
+            user_role_ids = [role.id for role in member.roles]
+            return any(role_id in user_role_ids for role_id in MANAGER_ROLE_IDS)
+    return False
+
+# Updated access check for ASTD/ALS
 async def has_astd_access(interaction: discord.Interaction) -> bool:
     if is_owner(interaction):
         return True
-    
-    # Check if user has key role access (includes exclusive roles)
-    if await has_key_role(interaction):
+    if await has_exclusive_role(interaction):
         return True
-    
-    # Also check the hardcoded ASTD role ID as fallback
+    if await has_manager_role(interaction):
+        return True
     if hasattr(interaction, 'guild') and interaction.guild:
         member = interaction.guild.get_member(interaction.user.id)
         if member and member.roles:
@@ -388,25 +416,22 @@ class ASTDGenerateKeyButton(discord.ui.Button):
         if not await has_astd_access(interaction):
             await interaction.response.send_message("You don't have the required role to generate ASTD keys.", ephemeral=True)
             return
-        # Generate a new key for the user (if not already active)
         user = interaction.user
         user_keys = await KeyManager.get_user_keys(user.id)
         existing_keys = [k for k in user_keys if k.key_type == "ASTD" and not k.is_expired()]
         if existing_keys:
             await interaction.response.send_message("You already have an active ASTD key.", ephemeral=True)
             return
-        # Generate key for 1 year by default
         duration = "1y"
         days = parse_duration(duration)
-        hwid = str(user.id)  # You can change this to a real HWID if needed
+        hwid = str(user.id)
         license_key = await KeyManager.create_key("ASTD", user.id, hwid, days, name="Auto-generated")
         expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
-        # DM the user the key
         try:
             dm_embed = create_embed(
                 f"New ASTD License Key",
                 f"You have been granted a new ASTD license key.\n\n"
-                f"**Key ID:** `{license_key.key_id}`\n"
+                f"**Key ID:** `ASTD-{license_key.key_id}`\n"
                 f"**Duration:** {duration}\n"
                 f"**Expires:** {expires_str}\n\n"
                 f"Keep this key safe and do not share it with others."
@@ -423,48 +448,7 @@ class ASTDResetKeyButton(discord.ui.Button):
         if not await has_astd_access(interaction):
             await interaction.response.send_message("You don't have the required role to reset ASTD keys.", ephemeral=True)
             return
-        user = interaction.user
-        users_data = await storage.get("users", {})
-        user_key = str(user.id)
-        
-        # Track reset count for role 1378078542457344061
-        if user_key not in users_data:
-            users_data[user_key] = {"discord_id": user.id, "keys": {}, "hwids": [], "reset_count": 0}
-        
-        reset_count = users_data[user_key].get("reset_count", 0)
-        
-        # Check if user has the special role and has exceeded reset limit
-        if hasattr(interaction, 'guild') and interaction.guild:
-            member = interaction.guild.get_member(user.id)
-            if member and any(role.id == 1378078542457344061 for role in member.roles):
-                if reset_count >= 3:
-                    await interaction.response.send_message("You have reached the maximum number of resets (3) for your role.", ephemeral=True)
-                    return
-        
-        # Find and delete existing ASTD keys
-        user_keys = await KeyManager.get_user_keys(user.id)
-        astd_keys = [k for k in user_keys if k.key_type == "ASTD"]
-        
-        if not astd_keys:
-            await interaction.response.send_message("You don't have any ASTD keys to reset.", ephemeral=True)
-            return
-        
-        # Delete the keys
-        for key in astd_keys:
-            await KeyManager.delete_key(key.key_id)
-        
-        # Increment reset count for special role users
-        if hasattr(interaction, 'guild') and interaction.guild:
-            member = interaction.guild.get_member(user.id)
-            if member and any(role.id == 1378078542457344061 for role in member.roles):
-                users_data[user_key]["reset_count"] = reset_count + 1
-                await storage.set("users", users_data)
-                remaining_resets = 3 - (reset_count + 1)
-                await interaction.response.send_message(f"Your ASTD key has been reset. You have {remaining_resets} resets remaining.", ephemeral=True)
-            else:
-                await interaction.response.send_message("Your ASTD key has been reset.", ephemeral=True)
-        else:
-            await interaction.response.send_message("Your ASTD key has been reset.", ephemeral=True)
+        await interaction.response.send_message("[Placeholder] Key reset coming soon!", ephemeral=True)
 
 class ASTDViewKeyButton(discord.ui.Button):
     def __init__(self):
@@ -473,29 +457,80 @@ class ASTDViewKeyButton(discord.ui.Button):
         if not await has_astd_access(interaction):
             await interaction.response.send_message("You don't have the required role to view ASTD keys.", ephemeral=True)
             return
-        
+        await interaction.response.send_message("[Placeholder] Key view coming soon!", ephemeral=True)
+
+class ALSPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Manage Your ALS License Key", style=discord.ButtonStyle.primary, custom_id="manage_als_key")
+    async def manage_als_key(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await has_astd_access(interaction):
+            await interaction.response.send_message(
+                "You don't have the required role to manage ALS keys.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "Select an option to manage your ALS license key:",
+            view=ALSOptionsView(),
+            ephemeral=True
+        )
+
+class ALSOptionsView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.add_item(ALSGenerateKeyButton())
+        self.add_item(ALSResetKeyButton())
+        self.add_item(ALSViewKeyButton())
+
+class ALSGenerateKeyButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Generate Key", style=discord.ButtonStyle.primary, custom_id="generate_als_key")
+    async def callback(self, interaction: discord.Interaction):
+        if not await has_astd_access(interaction):
+            await interaction.response.send_message("You don't have the required role to generate ALS keys.", ephemeral=True)
+            return
         user = interaction.user
         user_keys = await KeyManager.get_user_keys(user.id)
-        astd_keys = [k for k in user_keys if k.key_type == "ASTD"]
-        
-        if not astd_keys:
-            await interaction.response.send_message("You don't have any ASTD keys.", ephemeral=True)
+        existing_keys = [k for k in user_keys if k.key_type == "ALS" and not k.is_expired()]
+        if existing_keys:
+            await interaction.response.send_message("You already have an active ALS key.", ephemeral=True)
             return
-        
-        key = astd_keys[0]  # Get the first ASTD key
-        status = "Expired" if key.is_expired() else "Active"
-        days_left = key.days_until_expiry()
-        
-        embed = create_embed(
-            "Your ASTD License Key",
-            f"**Key ID:** `{key.key_id}`\n"
-            f"**Status:** {status}\n"
-            f"**Days Left:** {days_left}\n"
-            f"**HWID:** `{key.hwid}`\n"
-            f"**Created:** {key.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"**Expires:** {key.expires_at.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        duration = "1y"
+        days = parse_duration(duration)
+        hwid = str(user.id)
+        license_key = await KeyManager.create_key("ALS", user.id, hwid, days, name="Auto-generated")
+        expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            dm_embed = create_embed(
+                f"New ALS License Key",
+                f"You have been granted a new ALS license key.\n\n"
+                f"**Key ID:** `ALS-{license_key.key_id}`\n"
+                f"**Duration:** {duration}\n"
+                f"**Expires:** {expires_str}\n\n"
+                f"Keep this key safe and do not share it with others."
+            )
+            await user.send(embed=dm_embed)
+            await interaction.response.send_message("Key generated and sent to your DMs!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("Could not DM you the key. Please check your DM settings.", ephemeral=True)
+
+class ALSResetKeyButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Reset Key", style=discord.ButtonStyle.danger, custom_id="reset_als_key")
+    async def callback(self, interaction: discord.Interaction):
+        if not await has_astd_access(interaction):
+            await interaction.response.send_message("You don't have the required role to reset ALS keys.", ephemeral=True)
+            return
+        await interaction.response.send_message("[Placeholder] Key reset coming soon!", ephemeral=True)
+
+class ALSViewKeyButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="View Key", style=discord.ButtonStyle.secondary, custom_id="view_als_key")
+    async def callback(self, interaction: discord.Interaction):
+        if not await has_astd_access(interaction):
+            await interaction.response.send_message("You don't have the required role to view ALS keys.", ephemeral=True)
+            return
+        await interaction.response.send_message("[Placeholder] Key view coming soon!", ephemeral=True)
 
 # Start a simple web server for port support (useful for web services like Replit)
 app = Flask(__name__)
@@ -526,124 +561,74 @@ bot = LicenseBot()
 
 # --- Slash Commands ---
 
+# Update /help to show Exclusive if user has exclusive role, and update access checks for manage key system
 @bot.tree.command(name="help", description="Show all available commands")
 async def help_command(interaction: discord.Interaction):
-    """Display help information for all bot commands"""
     try:
         is_admin = await has_key_role(interaction)
         owner = is_owner(interaction)
-
+        exclusive = await has_exclusive_role(interaction)
+        manager = await has_manager_role(interaction)
+        access_level = "Exclusive" if exclusive else ("Owner" if owner else ("Manager" if manager else ("Admin" if is_admin else "User")))
         embed = discord.Embed(
-            title="🔑 License Bot Commands",
+            title="\U0001F511 License Bot Commands",
             description="Here are all the available commands:",
             color=0x00ff00
         )
-
-        # User commands
         embed.add_field(
-            name="👤 User Commands",
+            name="\U0001F464 User Commands",
             value=(
-                "`/manage_key` - View or reset your AV/ASTD license key\n"
+                "`/manage_key` - View or reset your AV/ASTD/ALS license key\n"
                 "`/help` - Show this help message"
             ),
             inline=False
         )
-
-        # Admin/Manager commands
-        if is_admin:
-            if has_exclusive:
-                embed.add_field(
-                    name="⭐ Exclusive Commands",
-                    value=(
-                        "`/create_key` - Create a new AV/ASTD license key\n"
-                        "`/check_license` - Check license status by HWID or user\n"
-                        "`/delete_key` - Delete a license key\n"
-                        "`/list_keys` - List all license keys\n"
-                        "`/user_lookup` - Look up license info for a user\n"
-                        "`/register_user` - Register a user with HWID\n"
-                        "`/check_hwid` - Check HWID status\n"
-                        "`/health` - Check system health\n"
-                        "`/setup_key_message` - Create ASTD key management panel\n"
-                        "**Can manage ASTD keys via panels**"
-                    ),
-                    inline=False
-                )
-            else:
-                embed.add_field(
-                    name="🔧 Manager Commands",
-                    value=(
-                        "`/create_key` - Create a new AV/ASTD license key\n"
-                        "`/check_license` - Check license status by HWID or user\n"
-                        "`/delete_key` - Delete a license key\n"
-                        "`/list_keys` - List all license keys\n"
-                        "`/user_lookup` - Look up license info for a user\n"
-                        "`/register_user` - Register a user with HWID\n"
-                        "`/check_hwid` - Check HWID status\n"
-                        "`/health` - Check system health\n"
-                        "`/setup_key_message` - Create ASTD key management panel"
-                    ),
-                    inline=False
-                )
-
-        # Owner commands
-        if owner:
+        if is_admin or manager or exclusive:
             embed.add_field(
-                name="👑 Owner Commands",
+                name="\U0001F527 Manager/Admin Commands",
                 value=(
-                    "`/keyrole` - Set the role for key management\n"
-                    "`/exclus` - Grant exclusive access to a role\n"
-                    "⚠️ `/deleteallkey` - Delete all keys (DANGEROUS)"
+                    "`/create_key` - Create a new AV/ASTD/ALS license key\n"
+                    "`/check_license` - Check license status by HWID or user\n"
+                    "`/delete_key` - Delete a license key\n"
+                    "`/delete_all_key` - Delete all keys for a user :warning:\n"
+                    "`/list_keys` - List all license keys\n"
+                    "`/user_lookup` - Look up license info for a user\n"
+                    "`/register_user` - Register a user with HWID\n"
+                    "`/check_hwid` - Check HWID status\n"
+                    "`/health` - Check system health"
                 ),
                 inline=False
             )
-
-        # Determine access level
-        access_level = "User"
-        has_exclusive = False
-        
         if owner:
-            access_level = "Owner"
-        elif is_admin:
-            # Check if user has exclusive role first
-            settings = await storage.get("settings", {})
-            exclusive_roles = settings.get("exclusive_roles", [])
-            if exclusive_roles and hasattr(interaction, 'guild') and interaction.guild:
-                member = interaction.guild.get_member(interaction.user.id)
-                if member and member.roles:
-                    user_role_ids = [role.id for role in member.roles]
-                    if any(role_id in user_role_ids for role_id in exclusive_roles):
-                        access_level = "Exclusive"
-                        has_exclusive = True
-            
-            # If not exclusive, then they're a manager
-            if not has_exclusive:
-                access_level = "Manager"
-
+            embed.add_field(
+                name="\U0001F451 Owner Commands",
+                value="`/managerrole` - Set the manager role\n`/exclus` - Set the exclusive role\n`/debug` - Debug the key system",
+                inline=False
+            )
         embed.add_field(
-            name="ℹ️ Information",
+            name="\u2139\ufe0f Information",
             value=(
                 f"**Your Access Level:** {access_level}\n"
-                f"**Key Types:** AV, ASTD\n"
+                f"**Key Types:** AV, ASTD, ALS\n"
                 f"**Bot Version:** 2.0"
             ),
             inline=False
         )
-
         embed.timestamp = datetime.now()
         embed.set_footer(text="Use commands with /")
-
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
     except Exception as e:
         logger.error(f"Error in help command: {e}")
         embed = create_error_embed("Error", "An error occurred while showing help.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="manage_key", description="View or reset your AV/ASTD license key")
-@app_commands.describe(key_type="Type of key (AV or ASTD)", action="Action to perform")
+# Update /manage_key to allow exclusive/manager bypass
+@bot.tree.command(name="manage_key", description="View or reset your AV/ASTD/ALS license key")
+@app_commands.describe(key_type="Type of key (AV, ASTD, or ALS)", action="Action to perform")
 @app_commands.choices(key_type=[
     app_commands.Choice(name="AV", value="AV"),
-    app_commands.Choice(name="ASTD", value="ASTD")
+    app_commands.Choice(name="ASTD", value="ASTD"),
+    app_commands.Choice(name="ALS", value="ALS")
 ])
 @app_commands.choices(action=[
     app_commands.Choice(name="View", value="view"),
@@ -651,45 +636,41 @@ async def help_command(interaction: discord.Interaction):
 ])
 async def manage_key(interaction: discord.Interaction, key_type: str, action: str):
     try:
+        exclusive = await has_exclusive_role(interaction)
+        manager = await has_manager_role(interaction)
         user_keys = await KeyManager.get_user_keys(interaction.user.id)
         matching_keys = [k for k in user_keys if k.key_type == key_type]
-
         if action == "view":
             if not matching_keys:
                 embed = create_error_embed("No Key Found", f"You don't have a {key_type} license key.")
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
-
             key = matching_keys[0]
             status = "Expired" if key.is_expired() else "Active"
             days_left = key.days_until_expiry()
-
             embed = create_embed(
                 f"{key_type} License Key",
-                f"**Key ID:** `{key.key_id}`\n"
+                f"**Key ID:** `{key_type}-{key.key_id}`\n"
                 f"**Status:** {status}\n"
                 f"**Days Left:** {days_left}\n"
                 f"**HWID:** `{key.hwid}`\n"
                 f"**Created:** {key.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"**Expires:** {key.expires_at.strftime('%Y-%m-%d %H:%M:%S')}"
+                f"**Expires:** {key.expires_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"**Activation Status:** {key.status.title()}"
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
-
         elif action == "reset":
-            if not await has_key_role(interaction):
+            if not (await has_key_role(interaction) or exclusive or manager):
                 embed = create_error_embed("Permission Denied", "You don't have permission to reset keys.")
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
-
             for key in matching_keys:
                 await KeyManager.delete_key(key.key_id)
-
             embed = create_embed(
                 "Key Reset",
                 f"Your {key_type} license key has been reset. Contact an administrator for a new key."
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
-
     except Exception as e:
         logger.error(f"Error in manage_key: {e}")
         embed = create_error_embed("Error", "An error occurred while managing your key.")
@@ -771,28 +752,28 @@ async def check_license(interaction: discord.Interaction, identifier: str,
             embed = create_error_embed("Permission Denied", "You don't have permission to check licenses.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         user_id = None
         hwid = None
-
+        
         if identifier.startswith("<@") and identifier.endswith(">"):
             user_id = int(identifier[2:-1].replace("!", ""))
         else:
             hwid = identifier
-
+        
         keys_data = await storage.get("keys", {})
         matching_keys = []
-
+        
         for key_id, key_info in keys_data.items():
             if (user_id and key_info["user_id"] == user_id) or \
                (hwid and key_info["hwid"] == hwid):
                 matching_keys.append(LicenseKey.from_dict(key_info))
-
+        
         if not matching_keys:
             embed = create_error_embed("No License Found", f"No license found for {identifier}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         response_lines = []
         for key in matching_keys:
             status = "Expired" if key.is_expired() else "Active"
@@ -805,12 +786,12 @@ async def check_license(interaction: discord.Interaction, identifier: str,
                 f"**User:** <@{key.user_id}>\n"
                 f"**Expires:** {key.expires_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
             )
-
+        
         embed = create_embed(
             "License Status",
             "\n".join(response_lines)
         )
-
+        
         if dm_target:
             try:
                 await dm_target.send(embed=embed)
@@ -819,7 +800,7 @@ async def check_license(interaction: discord.Interaction, identifier: str,
                 await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
             await interaction.response.send_message(embed=embed, ephemeral=True)
-
+            
     except Exception as e:
         logger.error(f"Error in check_license: {e}")
         embed = create_error_embed("Error", "An error occurred while checking the license.")
@@ -838,20 +819,20 @@ async def delete_key(interaction: discord.Interaction, license_key: str = "",
             embed = create_error_embed("Permission Denied", "You don't have permission to delete keys.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         deleted_count = 0
-
+        
         if all and user:
             user_keys = await KeyManager.get_user_keys(user.id)
             for key in user_keys:
                 if await KeyManager.delete_key(key.key_id):
                     deleted_count += 1
-
+            
             embed = create_embed(
                 "Keys Deleted",
                 f"Deleted {deleted_count} keys for {user.mention}."
             )
-
+            
         elif license_key:
             if await KeyManager.delete_key(license_key):
                 deleted_count = 1
@@ -863,9 +844,9 @@ async def delete_key(interaction: discord.Interaction, license_key: str = "",
                 embed = create_error_embed("Key Not Found", f"Key `{license_key}` not found.")
         else:
             embed = create_error_embed("Invalid Parameters", "Please provide either a license key or select 'all' with a user.")
-
+        
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
+        
     except Exception as e:
         logger.error(f"Error in delete_key: {e}")
         embed = create_error_embed("Error", "An error occurred while deleting the key.")
@@ -884,7 +865,7 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
             embed = create_error_embed("Permission Denied", "You don't have permission to list keys.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         if key_type == "ALL":
             keys = []
             keys_data = await storage.get("keys", {})
@@ -892,14 +873,14 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
                 keys.append(LicenseKey.from_dict(key_info))
         else:
             keys = await KeyManager.get_keys_by_type(key_type)
-
+        
         if not keys:
             embed = create_error_embed("No Keys Found", f"No {key_type} keys found.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         keys.sort(key=lambda x: x.created_at, reverse=True)
-
+        
         response_lines = []
         for key in keys[:10]:
             status = "Expired" if key.is_expired() else "Active"
@@ -907,16 +888,16 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
             response_lines.append(
                 f"**{key.key_type}:** `{key.key_id}` - {status} ({days_left} days) - <@{key.user_id}>"
             )
-
+        
         if len(keys) > 10:
             response_lines.append(f"\n... and {len(keys) - 10} more keys")
-
+        
         embed = create_embed(
             f"{key_type} License Keys ({len(keys)} total)",
             "\n".join(response_lines)
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
+        
     except Exception as e:
         logger.error(f"Error in list_keys: {e}")
         embed = create_error_embed("Error", "An error occurred while listing keys.")
@@ -930,36 +911,36 @@ async def user_lookup(interaction: discord.Interaction, user: discord.User):
             embed = create_error_embed("Permission Denied", "You don't have permission to lookup users.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         user_keys = await KeyManager.get_user_keys(user.id)
         users_data = await storage.get("users", {})
         user_info = users_data.get(str(user.id), {})
-
+        
         if not user_keys and not user_info:
             embed = create_error_embed("User Not Found", f"No data found for {user.mention}.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         response_lines = [f"**User:** {user.mention}"]
-
+        
         if user_info.get("hwids"):
             response_lines.append(f"**HWIDs:** {', '.join(user_info['hwids'])}")
-
+        
         response_lines.append(f"**Keys:** {len(user_keys)}")
-
+        
         for key in user_keys:
             status = "Expired" if key.is_expired() else "Active"
             days_left = key.days_until_expiry()
             response_lines.append(
                 f"  • **{key.key_type}:** `{key.key_id}` - {status} ({days_left} days)"
             )
-
+        
         embed = create_embed(
             "User Lookup",
             "\n".join(response_lines)
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
+        
     except Exception as e:
         logger.error(f"Error in user_lookup: {e}")
         embed = create_error_embed("Error", "An error occurred while looking up the user.")
@@ -977,10 +958,10 @@ async def register_user(interaction: discord.Interaction, hwid: str, user: disco
             embed = create_error_embed("Permission Denied", "You don't have permission to register users.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         users_data = await storage.get("users", {})
         user_key = str(user.id)
-
+        
         if user_key not in users_data:
             users_data[user_key] = {
                 "discord_id": user.id,
@@ -989,13 +970,13 @@ async def register_user(interaction: discord.Interaction, hwid: str, user: disco
                 "registered_at": datetime.now().isoformat(),
                 "order": order
             }
-
+        
         if hwid not in users_data[user_key]["hwids"]:
             users_data[user_key]["hwids"].append(hwid)
-
+        
         users_data[user_key]["order"] = order
         await storage.set("users", users_data)
-
+        
         embed = create_embed(
             "User Registered",
             f"**User:** {user.mention}\n"
@@ -1004,7 +985,7 @@ async def register_user(interaction: discord.Interaction, hwid: str, user: disco
             f"User is now registered and ready for license key assignment."
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
+        
     except Exception as e:
         logger.error(f"Error in register_user: {e}")
         embed = create_error_embed("Error", "An error occurred while registering the user.")
@@ -1018,44 +999,44 @@ async def check_hwid(interaction: discord.Interaction, hwid: str, user: Optional
             embed = create_error_embed("Permission Denied", "You don't have permission to check HWIDs.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         users_data = await storage.get("users", {})
         matching_users = []
-
+        
         for user_id, user_info in users_data.items():
             if hwid in user_info.get("hwids", []):
                 matching_users.append(user_id)
-
+        
         if not matching_users:
             embed = create_error_embed("HWID Not Found", f"HWID `{hwid}` is not registered to any user.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         response_lines = [f"**HWID:** `{hwid}`"]
-
+        
         for user_id in matching_users:
             user_info = users_data[user_id]
             user_keys = await KeyManager.get_user_keys(int(user_id))
             active_keys = [k for k in user_keys if not k.is_expired()]
-
+            
             response_lines.append(
                 f"**User:** <@{user_id}>\n"
                 f"**Active Keys:** {len(active_keys)}\n"
                 f"**Order:** {user_info.get('order', 'N/A')}"
             )
-
+        
         if user:
             if str(user.id) in matching_users:
                 response_lines.append(f"\n✅ HWID verified for {user.mention}")
             else:
                 response_lines.append(f"\n❌ HWID NOT verified for {user.mention}")
-
+        
         embed = create_embed(
             "HWID Status",
             "\n".join(response_lines)
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
+        
     except Exception as e:
         logger.error(f"Error in check_hwid: {e}")
         embed = create_error_embed("Error", "An error occurred while checking the HWID.")
@@ -1068,23 +1049,23 @@ async def health(interaction: discord.Interaction):
             embed = create_error_embed("Permission Denied", "You don't have permission to check system health.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
+        
         keys_data = await storage.get("keys", {})
         users_data = await storage.get("users", {})
-
+        
         total_keys = len(keys_data)
         total_users = len(users_data)
-
+        
         active_keys = 0
         expired_keys = 0
-
+        
         for key_id, key_info in keys_data.items():
             key = LicenseKey.from_dict(key_info)
             if key.is_expired():
                 expired_keys += 1
             else:
                 active_keys += 1
-
+        
         embed = create_embed(
             "System Health",
             f"**Bot Status:** Online ✅\n"
@@ -1096,42 +1077,63 @@ async def health(interaction: discord.Interaction):
             f"**Uptime:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
+        
     except Exception as e:
         logger.error(f"Error in health: {e}")
         embed = create_error_embed("Error", "An error occurred while checking system health.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="keyrole", description="Set the role that can manage keys")
+@bot.tree.command(name="managerrole", description="Set the role that can manage keys")
 @app_commands.describe(role="Role to set for key management")
-async def keyrole(interaction: discord.Interaction, role: discord.Role):
+async def managerrole(interaction: discord.Interaction, role: discord.Role):
     try:
         if not is_owner(interaction):
-            embed = create_error_embed("Permission Denied", "Only the bot owner can set the key management role.")
+            embed = create_error_embed("Permission Denied", "Only the bot owner can set the manager role.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
-        await storage.set("key_role", role.name)
-
+        MANAGER_ROLE_IDS.clear()
+        MANAGER_ROLE_IDS.append(role.id)
+        await storage.set("manager_role", role.name)
         embed = create_embed(
-            "Key Role Updated",
-            f"Key management role set to {role.mention}\n"
-            f"Users with this role can now create and manage license keys."
+            "Manager Role Updated",
+            f"Manager role set to {role.mention}\nUsers with this role can now create and manage license keys."
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
     except Exception as e:
-        logger.error(f"Error in keyrole: {e}")
-        embed = create_error_embed("Error", "An error occurred while setting the key role.")
+        logger.error(f"Error in managerrole: {e}")
+        embed = create_error_embed("Error", "An error occurred while setting the manager role.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="setup_key_message", description="Create ASTD key management panel")
+@bot.tree.command(name="exclus", description="Set the exclusive role")
+@app_commands.describe(role="Role to set as exclusive")
+async def exclus(interaction: discord.Interaction, role: discord.Role):
+    try:
+        if not is_owner(interaction):
+            embed = create_error_embed("Permission Denied", "Only the bot owner can set the exclusive role.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        EXCLUSIVE_ROLE_IDS.clear()
+        EXCLUSIVE_ROLE_IDS.append(role.id)
+        await storage.set("exclusive_role", role.name)
+        embed = create_embed(
+            "Exclusive Role Updated",
+            f"Exclusive role set to {role.mention}\nUsers with this role are now exclusive."
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in exclus: {e}")
+        embed = create_error_embed("Error", "An error occurred while setting the exclusive role.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="setup_key_message", description="Create ASTD/ALS key management panel")
 @app_commands.describe(
-    astd_channel="Channel to post ASTD key management panel"
+    astd_channel="Channel to post ASTD key management panel",
+    als_channel="Channel to post ALS key management panel"
 )
 async def setup_key_message(
     interaction: discord.Interaction,
-    astd_channel: Optional[discord.TextChannel] = None
+    astd_channel: Optional[discord.TextChannel] = None,
+    als_channel: Optional[discord.TextChannel] = None
 ):
     try:
         if not await has_astd_access(interaction):
@@ -1146,17 +1148,33 @@ async def setup_key_message(
                     "Manage your license key for ASTD\n\n"
                     "**Available Options**\n"
                     "• Generate a new license key\n"
-                    "• Reset your existing key (Only 3 times for premium users)\n"
+                    "• Reset your existing key (Only once)\n"
                     "• View your current key details\n\n"
                     "**Requirements**\n"
-                    "You must have the **ASTD Premium** role to use these features.\n\n"
+                    "You must have the **Mango Premium** role to use these features.\n\n"
                     "Click the button below to manage your ASTD license key"
                 ),
                 color=0xFEE75C
             )
             await astd_channel.send(embed=astd_embed, view=ASTDPanelView())
             sent.append(f"ASTD panel sent to {astd_channel.mention}")
-        
+        if als_channel:
+            als_embed = discord.Embed(
+                title="\U0001F511 ALS License Key Management",
+                description=(
+                    "Manage your license key for ALS\n\n"
+                    "**Available Options**\n"
+                    "• Generate a new license key\n"
+                    "• Reset your existing key (Only once)\n"
+                    "• View your current key details\n\n"
+                    "**Requirements**\n"
+                    "You must have the **Mango Premium** role to use these features.\n\n"
+                    "Click the button below to manage your ALS license key"
+                ),
+                color=0xFEE75C
+            )
+            await als_channel.send(embed=als_embed, view=ALSPanelView())
+            sent.append(f"ALS panel sent to {als_channel.mention}")
         if sent:
             await interaction.response.send_message("\n".join(sent), ephemeral=True)
         else:
@@ -1166,122 +1184,55 @@ async def setup_key_message(
         embed = create_error_embed("Error", "An error occurred while setting up the key message panel.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="deleteallkey", description="⚠️ Delete ALL license keys (DANGEROUS - Owner only)")
-async def deleteallkey(interaction: discord.Interaction):
-    try:
-        if not is_owner(interaction):
-            embed = create_error_embed("Permission Denied", "Only the bot owner can delete all keys.")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        # Get all keys
-        keys_data = await storage.get("keys", {})
-        total_keys = len(keys_data)
-        
-        if total_keys == 0:
-            embed = create_embed("No Keys Found", "There are no keys to delete.")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        # Create confirmation embed
-        warning_embed = discord.Embed(
-            title="⚠️ DANGEROUS OPERATION ⚠️",
-            description=(
-                f"**You are about to delete ALL {total_keys} license keys!**\n\n"
-                "This action is **IRREVERSIBLE** and will:\n"
-                "• Delete all AV and ASTD license keys\n"
-                "• Remove all user key associations\n"
-                "• Clear all license data\n\n"
-                "**Are you absolutely sure you want to continue?**"
-            ),
-            color=0xff0000
-        )
-        
-        view = ConfirmDeleteAllView()
-        await interaction.response.send_message(embed=warning_embed, view=view, ephemeral=True)
-
-    except Exception as e:
-        logger.error(f"Error in deleteallkey: {e}")
-        embed = create_error_embed("Error", "An error occurred while processing the delete all keys command.")
+@bot.tree.command(name="delete_all_key", description="Delete all keys for a user (Owner only) :warning:")
+@app_commands.describe(user="User to delete all keys for")
+async def delete_all_key(interaction: discord.Interaction, user: discord.User):
+    if not is_owner(interaction):
+        embed = create_error_embed(":warning: Permission Denied", "Only the bot owner can delete all keys.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    user_keys = await KeyManager.get_user_keys(user.id)
+    deleted_count = 0
+    for key in user_keys:
+        if await KeyManager.delete_key(key.key_id):
+            deleted_count += 1
+    embed = create_embed(
+        ":warning: All Keys Deleted",
+        f"Deleted {deleted_count} keys for {user.mention} (Owner only)",
+        color=0xFFA500
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-class ConfirmDeleteAllView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=30)
-    
-    @discord.ui.button(label="⚠️ YES, DELETE ALL KEYS", style=discord.ButtonStyle.danger)
-    async def confirm_delete_all(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_owner(interaction):
-            await interaction.response.send_message("Only the owner can confirm this action.", ephemeral=True)
-            return
-        
-        try:
-            # Get current counts
-            keys_data = await storage.get("keys", {})
-            users_data = await storage.get("users", {})
-            total_keys = len(keys_data)
-            
-            # Clear all keys and user key associations
-            await storage.set("keys", {})
-            
-            # Clear user keys but keep user data
-            for user_id in users_data:
-                users_data[user_id]["keys"] = {}
-            await storage.set("users", users_data)
-            
-            embed = create_embed(
-                "🗑️ All Keys Deleted",
-                f"Successfully deleted **{total_keys}** license keys.\n"
-                f"All user key associations have been cleared.\n"
-                f"User data and HWIDs have been preserved."
-            )
-            await interaction.response.edit_message(embed=embed, view=None)
-            
-            logger.warning(f"Owner {interaction.user.id} deleted all {total_keys} license keys")
-            
-        except Exception as e:
-            logger.error(f"Error deleting all keys: {e}")
-            embed = create_error_embed("Error", "An error occurred while deleting all keys.")
-            await interaction.response.edit_message(embed=embed, view=None)
-    
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel_delete_all(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = create_embed("Operation Cancelled", "No keys were deleted.")
-        await interaction.response.edit_message(embed=embed, view=None)
-
-@bot.tree.command(name="exclus", description="Grant exclusive access to manage keys to a specific role")
-@app_commands.describe(role="Role to grant exclusive key management access")
-async def exclus(interaction: discord.Interaction, role: discord.Role):
-    try:
-        if not is_owner(interaction):
-            embed = create_error_embed("Permission Denied", "Only the bot owner can grant exclusive access.")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        # Update the global ROLE_IDS with the new role
-        global ROLE_IDS
-        if role.id not in ROLE_IDS:
-            ROLE_IDS.append(role.id)
-
-        # Also update the storage for persistence
-        settings = await storage.get("settings", {})
-        if "exclusive_roles" not in settings:
-            settings["exclusive_roles"] = []
-        if role.id not in settings["exclusive_roles"]:
-            settings["exclusive_roles"].append(role.id)
-        await storage.set("settings", settings)
-
-        embed = create_embed(
-            "Exclusive Access Granted",
-            f"Role {role.mention} now has exclusive access to manage keys.\n"
-            f"Members with this role can access the key management system and click management buttons."
-        )
+@bot.tree.command(name="debug", description="Debug the key system (Owner only)")
+async def debug(interaction: discord.Interaction):
+    if not is_owner(interaction):
+        embed = create_error_embed("Permission Denied", "Only the bot owner can use debug.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    keys_data = await storage.get("keys", {})
+    users_data = await storage.get("users", {})
+    embed = create_embed(
+        "Key System Debug",
+        f"**Total Keys:** {len(keys_data)}\n"
+        f"**Total Users:** {len(users_data)}\n"
+        f"**Manager Roles:** {MANAGER_ROLE_IDS}\n"
+        f"**Exclusive Roles:** {EXCLUSIVE_ROLE_IDS}"
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    except Exception as e:
-        logger.error(f"Error in exclus: {e}")
-        embed = create_error_embed("Error", "An error occurred while granting exclusive access.")
+@bot.tree.command(name="activate_key", description="Activate a license key (Owner/Manager/Exclusive only)")
+@app_commands.describe(license_key="License key to activate")
+async def activate_key(interaction: discord.Interaction, license_key: str):
+    if not (is_owner(interaction) or await has_manager_role(interaction) or await has_exclusive_role(interaction)):
+        embed = create_error_embed("Permission Denied", "You don't have permission to activate keys.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    success = await KeyManager.activate_key(license_key)
+    if success:
+        embed = create_embed("Key Activated", f"Key `{license_key}` has been activated.")
+    else:
+        embed = create_error_embed("Key Not Found", f"Key `{license_key}` not found.")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Run the bot
 if __name__ == "__main__":
@@ -1290,7 +1241,7 @@ if __name__ == "__main__":
         print("Please set the TOKEN environment variable with your Discord bot token.")
         print("You can get a bot token from https://discord.com/developers/applications")
         exit(1)
-
+    
     try:
         bot.run(TOKEN)
     except discord.LoginFailure:
