@@ -576,17 +576,17 @@ class ASTDResetKeyButton(discord.ui.Button):
             await safe_send_response(interaction, "You don't have an ASTD key to reset.", ephemeral=True)
             return
         unlimited = is_owner(interaction) or await has_manager_role(interaction) or await has_exclusive_role(interaction)
-        
+
         # Check resets_left before attempting reset
         users_data = await storage.get("users", {})
         user_data = users_data.get(str(user.id), {})
         current_resets = user_data.get("resets_left", {}).get("ASTD", 7)
-        
+
         if not unlimited and current_resets <= 0:
             embed = create_error_embed("No Resets Left", "You have no resets left for this key.")
             await safe_send_response(interaction, embed=embed, ephemeral=True)
             return
-        
+
         reset_results = []
         error = None
         for key in matching_keys:
@@ -596,13 +596,13 @@ class ASTDResetKeyButton(discord.ui.Button):
             except Exception as e:
                 error = str(e)
                 reset_results.append((key, False))
-        
+
         # Fetch updated resets_left after reset
         users_data = await storage.get("users", {})
         user_data = users_data.get(str(user.id), {})
         resets_left = user_data.get("resets_left", {}).get("ASTD", 7)
         resets_left_display = "∞" if unlimited else resets_left
-        
+
         if reset_results[0][1]:
             embed = create_embed(
                 "Key Reset",
@@ -716,28 +716,28 @@ class ALSResetKeyButton(discord.ui.Button):
             await safe_send_response(interaction, "You don't have an ALS key to reset.", ephemeral=True)
             return
         unlimited = is_owner(interaction) or await has_manager_role(interaction) or await has_exclusive_role(interaction)
-        
+
         # Check resets_left before attempting reset
         users_data = await storage.get("users", {})
         user_data = users_data.get(str(user.id), {})
         current_resets = user_data.get("resets_left", {}).get("ALS", 7)
-        
+
         if not unlimited and current_resets <= 0:
             embed = create_error_embed("No Resets Left", "You have no resets left for this key.")
             await safe_send_response(interaction, embed=embed, ephemeral=True)
             return
-        
+
         reset_results = []
         for key in matching_keys:
             result = await KeyManager.reset_key(key.key_id, unlimited_resets=unlimited)
             reset_results.append((key, result))
-        
+
         # Fetch updated resets_left after reset
         users_data = await storage.get("users", {})
         user_data = users_data.get(str(user.id), {})
         resets_left = user_data.get("resets_left", {}).get("ALS", 7)
         resets_left_display = "∞" if unlimited else resets_left
-        
+
         if reset_results[0][1]:
             embed = create_embed(
                 "Key Reset",
@@ -822,12 +822,12 @@ def check_activation():
     """Check if a computer (HWID) already has an activated key"""
     data = request.get_json()
     hwid = data.get("hwid", "")
-    
+
     if not hwid:
         return jsonify({"activated": False, "message": "HWID required"})
-    
+
     keys_data = storage.data.get("keys", {})
-    
+
     # Check if any key with this HWID is activated
     for key_id, key_info in keys_data.items():
         if key_info.get("hwid", "") == hwid and key_info.get("status", "deactivated") == "activated":
@@ -843,7 +843,7 @@ def check_activation():
                     })
             except Exception:
                 continue
-    
+
     return jsonify({"activated": False})
 
 @app.route("/activate", methods=["POST"])
@@ -854,17 +854,35 @@ def activate_key_api():
     keys_data = storage.data.get("keys", {})
     if key in keys_data:
         key_info = keys_data[key]
-        # Only allow activation if not already activated and HWID matches
-        if key_info.get("status", "deactivated") != "activated" and hwid == key_info.get("hwid", ""):
-            key_info["status"] = "activated"
-            keys_data[key] = key_info
-            storage.save_sync(storage.data)
-            return jsonify({"success": True, "message": "Key activated."})
-        elif key_info.get("status", "deactivated") == "activated":
-            return jsonify({"success": True, "message": "Key already activated."})
-        else:
-            return jsonify({"success": False, "message": "HWID mismatch or invalid activation."})
+        # Always allow activation - update HWID to new session (kicks out previous user)
+        key_info["status"] = "activated"
+        key_info["hwid"] = hwid  # Update to new session ID
+        keys_data[key] = key_info
+        storage.save_sync(storage.data)
+        return jsonify({"success": True, "message": "Key activated."})
     return jsonify({"success": False, "message": "Key not found."})
+
+@app.route("/check_session", methods=["POST"])
+def check_session():
+    """Check if a specific session still owns the key"""
+    data = request.get_json()
+    key = data.get("key", "")
+    hwid = data.get("hwid", "")
+    
+    if not key or not hwid:
+        return jsonify({"valid": False, "message": "Key and HWID required"})
+    
+    keys_data = storage.data.get("keys", {})
+    if key in keys_data:
+        key_info = keys_data[key]
+        # Check if this session still owns the key
+        current_hwid = key_info.get("hwid", "")
+        if current_hwid == hwid and key_info.get("status", "deactivated") == "activated":
+            return jsonify({"valid": True, "message": "Session is valid"})
+        else:
+            return jsonify({"valid": False, "message": "Session no longer valid"})
+    
+    return jsonify({"valid": False, "message": "Key not found"})
 
 def run_web():
     port = int(os.getenv("PORT", 8080))
@@ -1571,28 +1589,28 @@ async def delete_all_key(interaction: discord.Interaction, user: discord.User):
             embed = create_error_embed("Permission Denied", "You don't have permission to delete all keys.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-        
+
         user_keys = await KeyManager.get_user_keys(user.id)
         deleted_count = 0
-        
+
         for key in user_keys:
             if await KeyManager.delete_key(key.key_id):
                 deleted_count += 1
-        
+
         # Also clear the user's resets_left data
         users_data = await storage.get("users", {})
         user_key = str(user.id)
         if user_key in users_data:
             users_data[user_key]["resets_left"] = {}
             await storage.set("users", users_data)
-        
+
         embed = create_embed(
             "All Keys Deleted",
             f"Deleted {deleted_count} keys for {user.mention}. Reset counts have been cleared.",
             color=0xFFA500
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-        
+
     except Exception as e:
         logger.error(f"Error in delete_all_key: {e}")
         embed = create_error_embed("Error", "An error occurred while deleting all keys.")
