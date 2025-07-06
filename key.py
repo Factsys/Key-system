@@ -788,13 +788,26 @@ def home():
 def check_key():
     data = request.get_json()
     key = data.get("key", "")
-    # Ignore HWID for all checks
+    hwid = data.get("hwid", "")
+    
     keys_data = storage.data.get("keys", {})
     if key in keys_data:
         key_info = keys_data[key]
-        # No HWID check at all
+        
+        # Check if key is expired
         try:
             expires_at = datetime.fromisoformat(key_info["expires_at"])
+            if expires_at.year < 9999 and expires_at <= datetime.now():
+                return jsonify({"valid": False, "message": "Key expired"})
+        except Exception:
+            return jsonify({"valid": False, "message": "Invalid key data"})
+        
+        # If key is activated, check HWID match
+        if key_info.get("status", "deactivated") == "activated":
+            if hwid and key_info.get("hwid", "") != hwid:
+                return jsonify({"valid": False, "message": "Key is registered to another computer"})
+        
+        try:
             if expires_at.year >= 9999:
                 days_left = '∞'
             else:
@@ -802,6 +815,7 @@ def check_key():
                 days_left = delta.days
         except Exception:
             days_left = None
+        
         resp = {
             "valid": True,
             "key_id": key_info.get("key_id", key),
@@ -815,7 +829,7 @@ def check_key():
             "days_left": days_left
         }
         return jsonify(resp)
-    return jsonify({"valid": False})
+    return jsonify({"valid": False, "message": "Key not found"})
 
 @app.route("/check_activation", methods=["POST"])
 def check_activation():
@@ -851,15 +865,36 @@ def activate_key_api():
     data = request.get_json()
     key = data.get("key", "")
     hwid = data.get("hwid", "")
+    
+    if not hwid:
+        return jsonify({"success": False, "message": "HWID required for activation."})
+    
     keys_data = storage.data.get("keys", {})
     if key in keys_data:
         key_info = keys_data[key]
-        # Always allow activation - update HWID to new session (kicks out previous user)
+        
+        # Check if key is expired
+        try:
+            expires_at = datetime.fromisoformat(key_info["expires_at"])
+            if expires_at.year < 9999 and expires_at <= datetime.now():
+                return jsonify({"success": False, "message": "Key expired."})
+        except Exception:
+            return jsonify({"success": False, "message": "Invalid key data."})
+        
+        # If key is already activated, check HWID match
+        if key_info.get("status", "deactivated") == "activated":
+            if key_info.get("hwid", "") != hwid:
+                return jsonify({"success": False, "message": "Key is already registered to another computer."})
+            else:
+                return jsonify({"success": True, "message": "Key already activated on this computer."})
+        
+        # Key is not activated yet, activate it with this HWID
         key_info["status"] = "activated"
-        key_info["hwid"] = hwid  # Update to new session ID
+        key_info["hwid"] = hwid
         keys_data[key] = key_info
         storage.save_sync(storage.data)
-        return jsonify({"success": True, "message": "Key activated."})
+        return jsonify({"success": True, "message": "Key activated successfully."})
+    
     return jsonify({"success": False, "message": "Key not found."})
 
 @app.route("/check_session", methods=["POST"])
