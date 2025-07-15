@@ -1081,16 +1081,16 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
         embed = create_error_embed("Error", "An error occurred while managing your key.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="create_key", description="Create a new AV/ASTD license key")
+@bot.tree.command(name="create_key", description="Create a new ALS/ASTD license key")
 @app_commands.describe(
-    key_type="Type of key (AV or ASTD)",
+    key_type="Type of key (ALS or ASTD)",
     duration="Duration (e.g. 1y, 1m, 1d, 1h, permanent)",
     name="Name for the key",
     user="User to create key for",
     hwid="Hardware ID"
 )
 @app_commands.choices(key_type=[
-    app_commands.Choice(name="AV", value="AV"),
+    app_commands.Choice(name="ALS", value="ALS"),
     app_commands.Choice(name="ASTD", value="ASTD")
 ])
 async def create_key(interaction: discord.Interaction, key_type: str, duration: str, 
