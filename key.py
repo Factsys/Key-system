@@ -1,3 +1,23 @@
+@bot.tree.command(name="deletekeysystem", description="\u26a0\ufe0f Wipe all key system data (danger)")
+async def deletekeysystem(interaction: discord.Interaction):
+    try:
+        if not is_owner(interaction):
+            embed = create_error_embed("Permission Denied", "Only the bot owner can wipe the key system database.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        # Wipe all key system data
+        storage.data["keys"] = {}
+        storage.data["users"] = {}
+        storage.save_sync(storage.data)
+        embed = create_embed(
+            "\u26a0\ufe0f Key System Deleted",
+            "All license keys and user data have been deleted from the database. This action cannot be undone!"
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in deletekeysystem: {e}")
+        embed = create_error_embed("Error", "An error occurred while deleting the key system.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 import discord
 from discord import app_commands
 import asyncio
@@ -939,14 +959,14 @@ async def help_command(interaction: discord.Interaction):
         is_admin = await has_key_role(interaction)
         owner = is_owner(interaction)
         try:
-            exclusive = await has_exclusive_role(interaction)
+            admin = await has_exclusive_role(interaction)  # Now ADMIN
         except Exception:
-            exclusive = False
+            admin = False
         try:
             manager = await has_manager_role(interaction)
         except Exception:
             manager = False
-        access_level = "Exclusive" if exclusive else ("Manager" if manager else ("Owner" if owner else ("Admin" if is_admin else "User")))
+        access_level = "OWNER" if owner else ("ADMIN" if admin else ("MANAGER" if manager else ("User" if is_admin else "User")))
         embed = discord.Embed(
             title="\U0001F511 License Bot Commands",
             description="Here are all the available commands:",
@@ -955,54 +975,41 @@ async def help_command(interaction: discord.Interaction):
         embed.add_field(
             name="\U0001F464 User Commands",
             value=(
-                "`/manage_key` - View or reset your AV/ASTD/ALS license key\n"
+                "`/manage_key` - View or reset your GAG/ASTD/ALS license key\n"
                 "`/help` - Show this help message"
             ),
             inline=False
         )
-        # Show manager commands if manager or exclusive
-        if manager or exclusive:
+        # Show manager/admin commands if manager or admin
+        if manager or admin:
             embed.add_field(
                 name="\U0001F527 Manager/Admin Commands",
                 value=(
-                    "`/create_key` - Create a new AV/ASTD/ALS license key\n"
+                    "`/create_key` - Create a new GAG/ASTD/ALS license key\n"
                     "`/check_license` - Check license status by HWID or user\n"
                     "`/delete_key` - Delete a license key\n"
                     "`/delete_all_key` - Delete all keys for a user :warning:\n"
-                    "`/list_keys` - List all license keys\n"
+                    "`/list_keys` - List all license keys (GAG, ASTD, ALS) with pagination\n"
                     "`/user_lookup` - Look up license info for a user\n"
                     "`/register_user` - Register a user with HWID\n"
                     "`/check_hwid` - Check HWID status\n"
-                    "`/health` - Check system health"
-                ),
-                inline=False
-            )
-        elif is_admin:
-            embed.add_field(
-                name="\U0001F527 Admin Commands",
-                value=(
-                    "`/create_key` - Create a new AV/ASTD/ALS license key\n"
-                    "`/check_license` - Check license status by HWID or user\n"
-                    "`/delete_key` - Delete a license key\n"
-                    "`/list_keys` - List all license keys\n"
-                    "`/user_lookup` - Look up license info for a user\n"
-                    "`/register_user` - Register a user with HWID\n"
-                    "`/check_hwid` - Check HWID status\n"
-                    "`/health` - Check system health"
+                    "`/health` - Check system health\n"
+                    "`/setup_key_message` - Create ASTD/ALS/GAG key management panel\n"
+                    "`/deletekeysystem` - \u26a0\ufe0f Wipe all key system data (danger)"
                 ),
                 inline=False
             )
         if owner:
             embed.add_field(
                 name="\U0001F451 Owner Commands",
-                value="`/managerrole` - Set the manager role\n`/exclus` - Set the exclusive role\n`/debug` - Debug the key system",
+                value="`/managerrole` - Set the manager role\n`/admin` - Set the admin role\n`/debug` - Debug the key system",
                 inline=False
             )
         embed.add_field(
             name="\u2139\ufe0f Information",
             value=(
                 f"**Your Access Level:** {access_level}\n"
-                f"**Key Types:** AV, ASTD, ALS\n"
+                f"**Key Types:** GAG, ASTD, ALS\n"
                 f"**Bot Version:** 2.0"
             ),
             inline=False
@@ -1016,10 +1023,10 @@ async def help_command(interaction: discord.Interaction):
         await safe_send_response(interaction, embed=embed, ephemeral=True)
 
 # Update /manage_key to allow exclusive/manager bypass
-@bot.tree.command(name="manage_key", description="View or reset your AV/ASTD/ALS license key")
-@app_commands.describe(key_type="Type of key (AV, ASTD, or ALS)", action="Action to perform")
+@bot.tree.command(name="manage_key", description="View or reset your GAG/ASTD/ALS license key")
+@app_commands.describe(key_type="Type of key (GAG, ASTD, or ALS)", action="Action to perform")
 @app_commands.choices(key_type=[
-    app_commands.Choice(name="AV", value="AV"),
+    app_commands.Choice(name="GAG", value="GAG"),
     app_commands.Choice(name="ASTD", value="ASTD"),
     app_commands.Choice(name="ALS", value="ALS")
 ])
@@ -1260,7 +1267,8 @@ async def delete_key(interaction: discord.Interaction, license_key: str = "",
 @bot.tree.command(name="list_keys", description="List all license keys")
 @app_commands.describe(key_type="Type of key to list")
 @app_commands.choices(key_type=[
-    app_commands.Choice(name="AV", value="AV"),
+    app_commands.Choice(name="GAG", value="GAG"),
+    app_commands.Choice(name="ALS", value="ALS"),
     app_commands.Choice(name="ASTD", value="ASTD"),
     app_commands.Choice(name="All", value="ALL")
 ])
@@ -1278,6 +1286,17 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
                 keys.append(LicenseKey.from_dict(key_info))
         else:
             keys = await KeyManager.get_keys_by_type(key_type)
+
+        if not keys:
+            embed = create_error_embed("No Keys Found", f"No {key_type} keys found.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        keys.sort(key=lambda x: x.created_at, reverse=True)
+
+        page = 0
+        page_size = 10
+        max_page = (len(keys) - 1) // page_size
 
         if not keys:
             embed = create_error_embed("No Keys Found", f"No {key_type} keys found.")
@@ -1314,16 +1333,14 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
         if max_page > 0:
             # Add cursor emoji for next page
             message = await interaction.original_response()
-            await message.add_reaction("➡️")
+            await message.add_reaction("🖱️")  # Cursor emoji
 
             def check(reaction, user):
                 return (
                     user.id == interaction.user.id and
-                    str(reaction.emoji) == "➡️" and
+                    str(reaction.emoji) == "🖱️" and
                     reaction.message.id == message.id
                 )
-
-            import asyncio
             try:
                 while True:
                     reaction, user = await interaction.client.wait_for("reaction_add", timeout=60.0, check=check)
@@ -1335,18 +1352,9 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
                         )
                         await message.edit(embed=embed)
                     # Remove user's reaction to allow repeated paging
-                    await message.remove_reaction("➡️", user)
+                    await message.remove_reaction("🖱️", user)
             except asyncio.TimeoutError:
                 pass
-
-    except Exception as e:
-        logger.error(f"Error in list_keys: {e}")
-        embed = create_error_embed("Error", "An error occurred while listing keys.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="user_lookup", description="Look up license information for a user")
-@app_commands.describe(user="User to look up")
-async def user_lookup(interaction: discord.Interaction, user: discord.User):
     try:
         if not await has_key_role(interaction):
             embed = create_error_embed("Permission Denied", "You don't have permission to lookup users.")
@@ -1585,15 +1593,39 @@ async def setup_key_message(
     interaction: discord.Interaction,
     astd_channel: Optional[str] = None,
     als_channel: Optional[str] = None
-):
     try:
         if not await has_astd_access(interaction):
-            embed = create_error_embed("Permission Denied", "You don't have permission to use this command.")
-            await safe_send_response(interaction, embed=embed, ephemeral=True)
+            await safe_send_response(interaction, "You don't have the required role to setup key panels.", ephemeral=True)
             return
         sent = []
+        # ASTD panel
         if astd_channel:
-            resolved_astd_channel = await resolve_channel(interaction.guild, astd_channel)
+            resolved_astd = await resolve_channel(interaction.guild, astd_channel)
+            if resolved_astd:
+                msg = await resolved_astd.send("ASTD Key Management Panel", view=ASTDPanelView())
+                sent.append(f"ASTD panel sent to {resolved_astd.mention}")
+        # ALS panel
+        if als_channel:
+            resolved_als = await resolve_channel(interaction.guild, als_channel)
+            if resolved_als:
+                msg = await resolved_als.send("ALS Key Management Panel", view=ALSPanelView())
+                sent.append(f"ALS panel sent to {resolved_als.mention}")
+        # GAG panel
+        gag_channel = None
+        if "gag_channel" in locals() or "gag_channel" in globals():
+            gag_channel = gag_channel
+        if gag_channel:
+            resolved_gag = await resolve_channel(interaction.guild, gag_channel)
+            if resolved_gag:
+                msg = await resolved_gag.send("GAG Key Management Panel", view=GAGPanelView())
+                sent.append(f"GAG panel sent to {resolved_gag.mention}")
+        if sent:
+            await safe_send_response(interaction, "\n".join(sent), ephemeral=True)
+        else:
+            await safe_send_response(interaction, "No panels sent. Please specify a channel.", ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in setup_key_message: {e}")
+        await safe_send_response(interaction, f"Error: {e}", ephemeral=True)
             if not resolved_astd_channel:
                 await safe_send_response(interaction, f"Could not find channel for input: {astd_channel}", ephemeral=True)
                 return
