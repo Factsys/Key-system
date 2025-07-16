@@ -25,6 +25,7 @@ import json
 import os
 import logging
 import hashlib
+import re
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 import time
@@ -1355,7 +1356,10 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
                     await message.remove_reaction("🖱️", user)
             except asyncio.TimeoutError:
                 pass
-    # ...existing code for user_lookup command...
+    except Exception as e:
+        logger.error(f"Error in list_keys: {e}")
+        embed = create_error_embed("Error", "An error occurred while listing the keys.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="register_user", description="Register a user with HWID")
 @app_commands.describe(
