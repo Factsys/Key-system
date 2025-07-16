@@ -1768,3 +1768,4 @@ if __name__ == "__main__":
         logger.error(f"Failed to start bot: {e}")
         print(f"Failed to start bot: {e}")
         exit(1)
+# End of file
