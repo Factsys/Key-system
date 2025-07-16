@@ -1,23 +1,3 @@
-@bot.tree.command(name="deletekeysystem", description="\u26a0\ufe0f Wipe all key system data (danger)")
-async def deletekeysystem(interaction: discord.Interaction):
-    try:
-        if not is_owner(interaction):
-            embed = create_error_embed("Permission Denied", "Only the bot owner can wipe the key system database.")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        # Wipe all key system data
-        storage.data["keys"] = {}
-        storage.data["users"] = {}
-        storage.save_sync(storage.data)
-        embed = create_embed(
-            "\u26a0\ufe0f Key System Deleted",
-            "All license keys and user data have been deleted from the database. This action cannot be undone!"
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    except Exception as e:
-        logger.error(f"Error in deletekeysystem: {e}")
-        embed = create_error_embed("Error", "An error occurred while deleting the key system.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 import discord
 from discord import app_commands
 import asyncio
@@ -1663,6 +1643,27 @@ async def activate_key(interaction: discord.Interaction, license_key: str):
     else:
         embed = create_error_embed("Key Not Found", f"Key `{license_key}` not found.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="deletekeysystem", description="⚠️ Wipe all key system data (danger)")
+async def deletekeysystem(interaction: discord.Interaction):
+    try:
+        if not is_owner(interaction):
+            embed = create_error_embed("Permission Denied", "Only the bot owner can wipe the key system database.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        # Wipe all key system data
+        storage.data["keys"] = {}
+        storage.data["users"] = {}
+        storage.save_sync(storage.data)
+        embed = create_embed(
+            "⚠️ Key System Deleted",
+            "All license keys and user data have been deleted from the database. This action cannot be undone!"
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in deletekeysystem: {e}")
+        embed = create_error_embed("Error", "An error occurred while deleting the key system.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Run the bot
 if __name__ == "__main__":
