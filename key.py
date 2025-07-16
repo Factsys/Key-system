@@ -408,7 +408,7 @@ async def has_astd_access(interaction: discord.Interaction) -> bool:
             return any(role.id == 1378078542457344061 for role in member.roles)
     return False
 
-def create_embed(title: str, description: str, color: int = 0x00ff00) -> discord.Embed:
+def create_embed(title: str, description: str, color: int = 0xff69b4) -> discord.Embed:
     """Create a Discord embed"""
     embed = discord.Embed(title=title, description=description, color=color)
     embed.timestamp = datetime.now()
@@ -778,6 +778,138 @@ class ALSViewKeyButton(discord.ui.Button):
         embed.set_footer(text="You are responsible for your own key! We will not replace it if you share it with others.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+class GAGPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Manage Your GAG License Key", style=discord.ButtonStyle.primary, custom_id="manage_gag_key")
+    async def manage_gag_key(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await has_astd_access(interaction):
+            await safe_send_response(interaction, "You don't have the required role to manage GAG keys.", ephemeral=True)
+            return
+        await safe_send_response(
+            interaction,
+            "Select an option to manage your GAG license key:",
+            view=GAGOptionsView(),
+            ephemeral=True
+        )
+
+class GAGOptionsView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)  # Permanent
+        self.add_item(GAGGenerateKeyButton())
+        self.add_item(GAGResetKeyButton())
+        self.add_item(GAGViewKeyButton())
+
+class GAGGenerateKeyButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Generate Key", style=discord.ButtonStyle.primary, custom_id="generate_gag_key")
+    async def callback(self, interaction: discord.Interaction):
+        if not await has_astd_access(interaction):
+            await safe_send_response(interaction, "You don't have the required role to generate GAG keys.", ephemeral=True)
+            return
+        user = interaction.user
+        user_keys = await KeyManager.get_user_keys(user.id)
+        existing_keys = [k for k in user_keys if k.key_type == "GAG" and not k.is_expired()]
+        if existing_keys:
+            await safe_send_response(interaction, "You already have an active GAG key.", ephemeral=True)
+            return
+        duration = "1y"
+        days = parse_duration(duration)
+        # Generate a computer-based HWID instead of using Discord ID
+        import hashlib
+        computer_hwid = hashlib.sha256(f"computer_{user.id}_{user.name}".encode()).hexdigest()[:16]
+        license_key = await KeyManager.create_key("GAG", user.id, computer_hwid, days, name="Auto-generated")
+        expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            dm_embed = create_embed(
+                f"New GAG License Key",
+                f"You have been granted a new GAG license key.\n\n"
+                f"**Key ID:** `{license_key.key_id}`\n"
+                f"**Duration:** {duration}\n"
+                f"**Expires:** {expires_str}\n\n"
+                f"Keep this key safe and do not share it with others."
+            )
+            await user.send(embed=dm_embed)
+            await safe_send_response(interaction, "Key generated and sent to your DMs!", ephemeral=True)
+        except discord.Forbidden:
+            await safe_send_response(interaction, "Could not DM you the key. Please check your DM settings.", ephemeral=True)
+
+class GAGResetKeyButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Reset Key", style=discord.ButtonStyle.danger, custom_id="reset_gag_key")
+    async def callback(self, interaction: discord.Interaction):
+        if not await has_astd_access(interaction):
+            await safe_send_response(interaction, "You don't have the required role to reset GAG keys.", ephemeral=True)
+            return
+        user = interaction.user
+        user_keys = await KeyManager.get_user_keys(user.id)
+        matching_keys = [k for k in user_keys if k.key_type == "GAG"]
+        if not matching_keys:
+            await safe_send_response(interaction, "You don't have a GAG key to reset.", ephemeral=True)
+            return
+        unlimited = is_owner(interaction) or await has_manager_role(interaction) or await has_exclusive_role(interaction)
+
+        # Check resets_left before attempting reset
+        users_data = await storage.get("users", {})
+        user_data = users_data.get(str(user.id), {})
+        current_resets = user_data.get("resets_left", {}).get("GAG", 7)
+
+        if not unlimited and current_resets <= 0:
+            embed = create_error_embed("No Resets Left", "You have no resets left for this key.")
+            await safe_send_response(interaction, embed=embed, ephemeral=True)
+            return
+
+        reset_results = []
+        for key in matching_keys:
+            result = await KeyManager.reset_key(key.key_id, unlimited_resets=unlimited)
+            reset_results.append((key, result))
+
+        # Fetch updated resets_left after reset
+        users_data = await storage.get("users", {})
+        user_data = users_data.get(str(user.id), {})
+        resets_left = user_data.get("resets_left", {}).get("GAG", 7)
+        resets_left_display = "∞" if unlimited else resets_left
+
+        if reset_results[0][1]:
+            embed = create_embed(
+                "Key Reset",
+                f"Your GAG license key has been reset and deleted. You can now generate a new one. Resets Left: {resets_left_display}"
+            )
+        else:
+            embed = create_error_embed("No Resets Left", "You have no resets left for this key.")
+        await safe_send_response(interaction, embed=embed, ephemeral=True)
+
+class GAGViewKeyButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="View Key", style=discord.ButtonStyle.secondary, custom_id="view_gag_key")
+    async def callback(self, interaction: discord.Interaction):
+        if not await has_astd_access(interaction):
+            await interaction.response.send_message("You don't have the required role to view GAG keys.", ephemeral=True)
+            return
+        user = interaction.user
+        user_keys = await KeyManager.get_user_keys(user.id)
+        matching_keys = [k for k in user_keys if k.key_type == "GAG"]
+        if not matching_keys:
+            await interaction.response.send_message("You don't have a GAG key.", ephemeral=True)
+            return
+        key = matching_keys[0]
+        status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
+        days_left = key.days_until_expiry()
+        hwid = key.hwid
+        resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
+        embed = discord.Embed(
+            title="\U0001F511 Your GAG License Key",
+            description=f"**License Key**\n`{key.key_id}`",
+            color=0x00ff00
+        )
+        embed.add_field(name="\U0001F4DD Status", value=status, inline=True)
+        embed.add_field(name="HWID", value=hwid, inline=True)
+        embed.add_field(name="\U0001F551 Expiry", value=key.expires_at.strftime('%a %b %d %H:%M:%S %Y'), inline=True)
+        embed.add_field(name="Resets Left", value=str(resets_left), inline=True)
+        embed.set_footer(text="You are responsible for your own key! We will not replace it if you share it with others.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # Start a simple web server for port support (useful for web services like Replit)
 app = Flask(__name__)
 
@@ -1091,20 +1223,21 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
         embed = create_error_embed("Error", "An error occurred while managing your key.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="create_key", description="Create a new ALS/ASTD license key")
+@bot.tree.command(name="create_key", description="Create a new GAG/ALS/ASTD license key")
 @app_commands.describe(
-    key_type="Type of key (ALS or ASTD)",
+    key_type="Type of key (GAG, ALS, or ASTD)",
     duration="Duration (e.g. 1y, 1m, 1d, 1h, permanent)",
     name="Name for the key",
     user="User to create key for",
-    hwid="Hardware ID"
+    hwid="Hardware ID (optional - will auto-generate if not provided)"
 )
 @app_commands.choices(key_type=[
+    app_commands.Choice(name="GAG", value="GAG"),
     app_commands.Choice(name="ALS", value="ALS"),
     app_commands.Choice(name="ASTD", value="ASTD")
 ])
 async def create_key(interaction: discord.Interaction, key_type: str, duration: str, 
-                    name: str, user: discord.User, hwid: str):
+                    name: str, user: discord.User, hwid: Optional[str] = None):
     try:
         if not await has_key_role(interaction):
             embed = create_error_embed("Permission Denied", "You don't have permission to create keys.")
@@ -1119,6 +1252,12 @@ async def create_key(interaction: discord.Interaction, key_type: str, duration: 
             embed = create_error_embed("Invalid Duration", "Duration must be between 1 hour and 10 years, or 'permanent'.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
+        
+        # Auto-generate HWID if not provided
+        if not hwid:
+            import hashlib
+            hwid = hashlib.sha256(f"computer_{user.id}_{user.name}".encode()).hexdigest()[:16]
+        
         user_keys = await KeyManager.get_user_keys(user.id)
         existing_keys = [k for k in user_keys if k.key_type == key_type and not k.is_expired()]
         if existing_keys:
@@ -1573,21 +1712,56 @@ async def setup_key_message(
         if astd_channel:
             resolved_astd = await resolve_channel(interaction.guild, astd_channel)
             if resolved_astd:
-                msg = await resolved_astd.send("ASTD Key Management Panel", view=ASTDPanelView())
+                astd_embed = create_embed(
+                    "🔑 ASTD License Key Management",
+                    "Manage your license key for ASTD\n\n"
+                    "**Available Options**\n"
+                    "• Generate a new license key\n"
+                    "• Reset your existing key (Only once)\n"
+                    "• View your current key details\n\n"
+                    "**Requirements**\n"
+                    "You must have the **Mango Premium** role to use these features.\n\n"
+                    "Click the button below to manage your ASTD license key",
+                    color=0x00ff00
+                )
+                msg = await resolved_astd.send(embed=astd_embed, view=ASTDPanelView())
                 sent.append(f"ASTD panel sent to {resolved_astd.mention}")
         # ALS panel
         if als_channel:
             resolved_als = await resolve_channel(interaction.guild, als_channel)
             if resolved_als:
-                msg = await resolved_als.send("ALS Key Management Panel", view=ALSPanelView())
+                als_embed = create_embed(
+                    "🔑 ALS License Key Management",
+                    "Manage your license key for ALS\n\n"
+                    "**Available Options**\n"
+                    "• Generate a new license key\n"
+                    "• Reset your existing key (Only once)\n"
+                    "• View your current key details\n\n"
+                    "**Requirements**\n"
+                    "You must have the **Mango Premium** role to use these features.\n\n"
+                    "Click the button below to manage your ALS license key",
+                    color=0x00ff00
+                )
+                msg = await resolved_als.send(embed=als_embed, view=ALSPanelView())
                 sent.append(f"ALS panel sent to {resolved_als.mention}")
         # GAG panel
         if gag_channel:
-            # You need to implement GAGPanelView similar to ASTDPanelView/ALSPanelView
             try:
                 resolved_gag = await resolve_channel(interaction.guild, gag_channel)
                 if resolved_gag:
-                    msg = await resolved_gag.send("GAG Key Management Panel", view=discord.ui.View(timeout=None))
+                    gag_embed = create_embed(
+                        "🔑 GAG License Key Management",
+                        "Manage your license key for GAG\n\n"
+                        "**Available Options**\n"
+                        "• Generate a new license key\n"
+                        "• Reset your existing key (Only once)\n"
+                        "• View your current key details\n\n"
+                        "**Requirements**\n"
+                        "You must have the **Mango Premium** role to use these features.\n\n"
+                        "Click the button below to manage your GAG license key",
+                        color=0x00ff00
+                    )
+                    msg = await resolved_gag.send(embed=gag_embed, view=GAGPanelView())
                     sent.append(f"GAG panel sent to {resolved_gag.mention}")
             except Exception as e:
                 sent.append(f"Error sending GAG panel: {e}")
