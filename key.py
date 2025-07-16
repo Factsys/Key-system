@@ -1355,45 +1355,7 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
                     await message.remove_reaction("🖱️", user)
             except asyncio.TimeoutError:
                 pass
-    try:
-        if not await has_key_role(interaction):
-            embed = create_error_embed("Permission Denied", "You don't have permission to lookup users.")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        user_keys = await KeyManager.get_user_keys(user.id)
-        users_data = await storage.get("users", {})
-        user_info = users_data.get(str(user.id), {})
-
-        if not user_keys and not user_info:
-            embed = create_error_embed("User Not Found", f"No data found for {user.mention}.")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        response_lines = [f"**User:** {user.mention}"]
-
-        if user_info.get("hwids"):
-            response_lines.append(f"**HWIDs:** {', '.join(user_info['hwids'])}")
-
-        response_lines.append(f"**Keys:** {len(user_keys)}")
-
-        for key in user_keys:
-            status = "Expired" if key.is_expired() else "Active"
-            days_left = key.days_until_expiry()
-            response_lines.append(
-                f"  • **{key.key_type}:** `{key.key_id}` - {status} ({days_left} days)"
-            )
-
-        embed = create_embed(
-            "User Lookup",
-            "\n".join(response_lines)
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    except Exception as e:
-        logger.error(f"Error in user_lookup: {e}")
-        embed = create_error_embed("Error", "An error occurred while looking up the user.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    # ...existing code for user_lookup command...
 
 @bot.tree.command(name="register_user", description="Register a user with HWID")
 @app_commands.describe(
@@ -1584,15 +1546,18 @@ async def exclus(interaction: discord.Interaction, role: str):
         embed = create_error_embed("Error", "An error occurred while setting the exclusive role.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="setup_key_message", description="Create ASTD/ALS key management panel")
+@bot.tree.command(name="setup_key_message", description="Create ASTD/ALS/GAG key management panel")
 @app_commands.describe(
     astd_channel="Channel to post ASTD key management panel (mention, name, or ID)",
-    als_channel="Channel to post ALS key management panel (mention, name, or ID)"
+    als_channel="Channel to post ALS key management panel (mention, name, or ID)",
+    gag_channel="Channel to post GAG key management panel (mention, name, or ID)"
 )
 async def setup_key_message(
     interaction: discord.Interaction,
     astd_channel: Optional[str] = None,
-    als_channel: Optional[str] = None
+    als_channel: Optional[str] = None,
+    gag_channel: Optional[str] = None
+):
     try:
         if not await has_astd_access(interaction):
             await safe_send_response(interaction, "You don't have the required role to setup key panels.", ephemeral=True)
@@ -1611,14 +1576,15 @@ async def setup_key_message(
                 msg = await resolved_als.send("ALS Key Management Panel", view=ALSPanelView())
                 sent.append(f"ALS panel sent to {resolved_als.mention}")
         # GAG panel
-        gag_channel = None
-        if "gag_channel" in locals() or "gag_channel" in globals():
-            gag_channel = gag_channel
         if gag_channel:
-            resolved_gag = await resolve_channel(interaction.guild, gag_channel)
-            if resolved_gag:
-                msg = await resolved_gag.send("GAG Key Management Panel", view=GAGPanelView())
-                sent.append(f"GAG panel sent to {resolved_gag.mention}")
+            # You need to implement GAGPanelView similar to ASTDPanelView/ALSPanelView
+            try:
+                resolved_gag = await resolve_channel(interaction.guild, gag_channel)
+                if resolved_gag:
+                    msg = await resolved_gag.send("GAG Key Management Panel", view=discord.ui.View(timeout=None))
+                    sent.append(f"GAG panel sent to {resolved_gag.mention}")
+            except Exception as e:
+                sent.append(f"Error sending GAG panel: {e}")
         if sent:
             await safe_send_response(interaction, "\n".join(sent), ephemeral=True)
         else:
@@ -1626,62 +1592,6 @@ async def setup_key_message(
     except Exception as e:
         logger.error(f"Error in setup_key_message: {e}")
         await safe_send_response(interaction, f"Error: {e}", ephemeral=True)
-            if not resolved_astd_channel:
-                await safe_send_response(interaction, f"Could not find channel for input: {astd_channel}", ephemeral=True)
-                return
-            try:
-                astd_embed = discord.Embed(
-                    title="\U0001F511 ASTD License Key Management",
-                    description=(
-                        "Manage your license key for ASTD\n\n"
-                        "**Available Options**\n"
-                        "• Generate a new license key\n"
-                        "• Reset your existing key (Only once)\n"
-                        "• View your current key details\n\n"
-                        "**Requirements**\n"
-                        "You must have the **Mango Premium** role to use these features.\n\n"
-                        "Click the button below to manage your ASTD license key"
-                    ),
-                    color=0xFEE75C
-                )
-                await resolved_astd_channel.send(embed=astd_embed, view=ASTDPanelView())
-                sent.append(f"ASTD panel sent to {resolved_astd_channel.mention}")
-            except Exception as e:
-                await safe_send_response(interaction, f"Failed to send ASTD panel: {e}", ephemeral=True)
-                return
-        if als_channel:
-            resolved_als_channel = await resolve_channel(interaction.guild, als_channel)
-            if not resolved_als_channel:
-                await safe_send_response(interaction, f"Could not find channel for input: {als_channel}", ephemeral=True)
-                return
-            try:
-                als_embed = discord.Embed(
-                    title="\U0001F511 ALS License Key Management",
-                    description=(
-                        "Manage your license key for ALS\n\n"
-                        "**Available Options**\n"
-                        "• Generate a new license key\n"
-                        "• Reset your existing key (Only once)\n"
-                        "• View your current key details\n\n"
-                        "**Requirements**\n"
-                        "You must have the **Mango Premium** role to use these features.\n\n"
-                        "Click the button below to manage your ALS license key"
-                    ),
-                    color=0xFEE75C
-                )
-                await resolved_als_channel.send(embed=als_embed, view=ALSPanelView())
-                sent.append(f"ALS panel sent to {resolved_als_channel.mention}")
-            except Exception as e:
-                await safe_send_response(interaction, f"Failed to send ALS panel: {e}", ephemeral=True)
-                return
-        if sent:
-            await safe_send_response(interaction, "\n".join(sent), ephemeral=True)
-        else:
-            await safe_send_response(interaction, "No channel specified.", ephemeral=True)
-    except Exception as e:
-        logger.error(f"Error in setup_key_message: {e}")
-        embed = create_error_embed("Error", f"An error occurred while setting up the key message panel.\nError: {e}")
-        await safe_send_response(interaction, embed=embed, ephemeral=True)
 
 @bot.tree.command(name="delete_all_key", description="Delete all keys for a user")
 @app_commands.describe(user="User to delete all keys for")
