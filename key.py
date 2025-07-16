@@ -1,3 +1,4 @@
+
 import discord
 from discord import app_commands
 import asyncio
@@ -61,7 +62,18 @@ class Storage:
                     "keys": {},
                     "users": {},
                     "key_role": "KeyManager",
-                    "settings": {}
+                    "settings": {
+                        "max_keys_per_user": 3,
+                        "default_key_duration": "1y",
+                        "auto_expire_cleanup": True,
+                        "require_hwid_verification": True,
+                        "allow_key_sharing": False,
+                        "maintenance_mode": False,
+                        "key_generation_cooldown": 300,
+                        "max_reset_attempts": 7,
+                        "backup_enabled": True,
+                        "audit_log_enabled": True
+                    }
                 }
                 self.save_sync(default_data)
                 return default_data
@@ -71,7 +83,18 @@ class Storage:
                 "keys": {},
                 "users": {},
                 "key_role": "KeyManager",
-                "settings": {}
+                "settings": {
+                    "max_keys_per_user": 3,
+                    "default_key_duration": "1y",
+                    "auto_expire_cleanup": True,
+                    "require_hwid_verification": True,
+                    "allow_key_sharing": False,
+                    "maintenance_mode": False,
+                    "key_generation_cooldown": 300,
+                    "max_reset_attempts": 7,
+                    "backup_enabled": True,
+                    "audit_log_enabled": True
+                }
             }
 
     def save_sync(self, data):
@@ -171,14 +194,14 @@ class KeyManager:
     async def create_key(key_type: str, user_id: int, hwid: str, duration_days: int, name: str = "", resets_left: int = None, unlimited_resets: bool = False) -> LicenseKey:
         users_data = await storage.get("users", {})
         user_key = str(user_id)
-        # --- PATCH: Check resets_left for this user/key_type ---
+        # Check resets_left for this user/key_type
         if not unlimited_resets:
             if user_key in users_data:
                 resets_info = users_data[user_key].get("resets_left", {})
                 resets_left_for_type = resets_info.get(key_type, 7)
                 if resets_left_for_type <= 0:
                     raise Exception(f"No resets left for {key_type} key.")
-        # ...existing code for key creation...
+        
         key_id = KeyManager.generate_key(key_type, user_id, hwid)
         if duration_days == 0:
             expires_at = datetime(year=9999, month=12, day=31)
@@ -218,7 +241,8 @@ class KeyManager:
         }
         if hwid not in users_data[user_key]["hwids"]:
             users_data[user_key]["hwids"].append(hwid)
-        # --- PATCH: Save resets_left for this key_type ---
+        
+        # Save resets_left for this key_type
         if "resets_left" not in users_data[user_key]:
             users_data[user_key]["resets_left"] = {}
         if not unlimited_resets:
@@ -320,7 +344,7 @@ class KeyManager:
             users_data = await storage.get("users", {})
             if user_id in users_data and key_id in users_data[user_id]["keys"]:
                 del users_data[user_id]["keys"][key_id]
-                # --- PATCH: Decrement resets_left for this key_type ---
+                # Decrement resets_left for this key_type
                 if not unlimited_resets:
                     resets_info = users_data[user_id].setdefault("resets_left", {})
                     resets_info[key_type] = max(0, resets_info.get(key_type, 7) - 1)
@@ -378,7 +402,6 @@ async def has_exclusive_role(interaction: discord.Interaction) -> bool:
             return any(role.id in EXCLUSIVE_ROLE_IDS for role in member.roles)
     return False
 
-# --- PATCH: Add hardcoded role check for ASTD access ---
 async def has_astd_bypass_role(interaction: discord.Interaction) -> bool:
     """Bypass for ASTD role ID 1378078542457344061"""
     if hasattr(interaction, 'guild') and interaction.guild:
@@ -391,7 +414,6 @@ async def has_astd_bypass_role(interaction: discord.Interaction) -> bool:
             return any(role.id == 1378078542457344061 for role in member.roles)
     return False
 
-# Updated access check for ASTD/ALS (fix: always check manager/exclusive/hardcoded first)
 async def has_astd_access(interaction: discord.Interaction) -> bool:
     """Check if user has access to ASTD features - requires specific role"""
     if is_owner(interaction):
@@ -409,7 +431,7 @@ async def has_astd_access(interaction: discord.Interaction) -> bool:
     return False
 
 def create_embed(title: str, description: str, color: int = 0xff69b4) -> discord.Embed:
-    """Create a Discord embed"""
+    """Create a Discord embed with pink color"""
     embed = discord.Embed(title=title, description=description, color=color)
     embed.timestamp = datetime.now()
     return embed
@@ -475,7 +497,6 @@ async def resolve_channel(guild, channel_input):
                 return channel
     return None
 
-# --- PATCH: Utility to safely respond to interactions ---
 def safe_send_response(interaction, *args, **kwargs):
     try:
         if not interaction.response.is_done():
@@ -637,7 +658,7 @@ class ASTDViewKeyButton(discord.ui.Button):
         embed = discord.Embed(
             title="\U0001F511 Your ASTD License Key",
             description=f"**License Key**\n`{key.key_id}`",
-            color=0x00ff00
+            color=0xff69b4
         )
         embed.add_field(name="\U0001F4DD Status", value=status, inline=True)
         embed.add_field(name="HWID", value=hwid, inline=True)
@@ -769,7 +790,7 @@ class ALSViewKeyButton(discord.ui.Button):
         embed = discord.Embed(
             title="\U0001F511 Your ALS License Key",
             description=f"**License Key**\n`{key.key_id}`",
-            color=0x00ff00
+            color=0xff69b4
         )
         embed.add_field(name="\U0001F4DD Status", value=status, inline=True)
         embed.add_field(name="HWID", value=hwid, inline=True)
@@ -901,7 +922,7 @@ class GAGViewKeyButton(discord.ui.Button):
         embed = discord.Embed(
             title="\U0001F511 Your GAG License Key",
             description=f"**License Key**\n`{key.key_id}`",
-            color=0x00ff00
+            color=0xff69b4
         )
         embed.add_field(name="\U0001F4DD Status", value=status, inline=True)
         embed.add_field(name="HWID", value=hwid, inline=True)
@@ -1052,6 +1073,44 @@ def check_session():
 
     return jsonify({"valid": False, "message": "Key not found"})
 
+@app.route("/settings", methods=["GET"])
+def get_settings():
+    """Get key system settings"""
+    settings = storage.data.get("settings", {})
+    return jsonify(settings)
+
+@app.route("/stats", methods=["GET"])
+def get_stats():
+    """Get key system statistics"""
+    keys_data = storage.data.get("keys", {})
+    users_data = storage.data.get("users", {})
+    
+    total_keys = len(keys_data)
+    active_keys = 0
+    expired_keys = 0
+    
+    for key_info in keys_data.values():
+        try:
+            expires_at = datetime.fromisoformat(key_info["expires_at"])
+            if expires_at.year < 9999 and expires_at <= datetime.now():
+                expired_keys += 1
+            else:
+                active_keys += 1
+        except:
+            expired_keys += 1
+    
+    return jsonify({
+        "total_keys": total_keys,
+        "active_keys": active_keys,
+        "expired_keys": expired_keys,
+        "total_users": len(users_data),
+        "key_types": {
+            "GAG": len([k for k in keys_data.values() if k.get("key_type") == "GAG"]),
+            "ASTD": len([k for k in keys_data.values() if k.get("key_type") == "ASTD"]),
+            "ALS": len([k for k in keys_data.values() if k.get("key_type") == "ALS"])
+        }
+    })
+
 def run_web():
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
@@ -1063,9 +1122,8 @@ web_thread.start()
 
 bot = LicenseBot()
 
-# --- Slash Commands ---
+# Slash Commands
 
-# Update /help to show Exclusive if user has exclusive role, and update access checks for manage key system
 @bot.tree.command(name="help", description="Show all available commands")
 async def help_command(interaction: discord.Interaction):
     try:
@@ -1085,7 +1143,7 @@ async def help_command(interaction: discord.Interaction):
         embed = discord.Embed(
             title="\U0001F511 License Bot Commands",
             description="Here are all the available commands:",
-            color=0x00ff00
+            color=0xff69b4
         )
         
         # User Commands - Always shown
@@ -1093,6 +1151,7 @@ async def help_command(interaction: discord.Interaction):
             name="\U0001F464 User Commands",
             value=(
                 "`/manage_key` - View or reset your GAG/ASTD/ALS license key\n"
+                "`/key_stats` - View your personal key statistics\n"
                 "`/help` - Show this help message"
             ),
             inline=False
@@ -1110,7 +1169,8 @@ async def help_command(interaction: discord.Interaction):
                     "`/register_user` - Register a user with HWID\n"
                     "`/check_hwid` - Check HWID status\n"
                     "`/health` - Check system health\n"
-                    "`/setup_key_message` - Create ASTD/ALS/GAG key management panel"
+                    "`/setup_key_message` - Create ASTD/ALS/GAG key management panel\n"
+                    "`/system_stats` - View detailed system statistics"
                 ),
                 inline=False
             )
@@ -1122,7 +1182,9 @@ async def help_command(interaction: discord.Interaction):
                 value=(
                     "`/delete_all_key` - Delete all keys for a user \u26a0\ufe0f\n"
                     "`/activate_key` - Activate a license key\n"
-                    "`/user_lookup` - Look up license info for a user"
+                    "`/user_lookup` - Look up license info for a user\n"
+                    "`/bulk_operations` - Perform bulk operations on keys\n"
+                    "`/system_config` - Configure system settings"
                 ),
                 inline=False
             )
@@ -1135,6 +1197,8 @@ async def help_command(interaction: discord.Interaction):
                     "`/managerrole` - Set the manager role\n"
                     "`/exclus` - Set the exclusive/admin role\n"
                     "`/debug` - Debug the key system\n"
+                    "`/backup_system` - Create system backup\n"
+                    "`/restore_system` - Restore system from backup\n"
                     "`/deletekeysystem` - \u26a0\ufe0f Wipe all key system data (danger)"
                 ),
                 inline=False
@@ -1145,7 +1209,8 @@ async def help_command(interaction: discord.Interaction):
             value=(
                 f"**Your Access Level:** {access_level}\n"
                 f"**Key Types:** GAG, ASTD, ALS\n"
-                f"**Bot Version:** 2.0"
+                f"**Bot Version:** 2.1 Enhanced\n"
+                f"**New Features:** Enhanced statistics, bulk operations, system config"
             ),
             inline=False
         )
@@ -1157,7 +1222,6 @@ async def help_command(interaction: discord.Interaction):
         embed = create_error_embed("Error", "An error occurred while showing help.")
         await safe_send_response(interaction, embed=embed, ephemeral=True)
 
-# Update /manage_key to allow exclusive/manager bypass
 @bot.tree.command(name="manage_key", description="View or reset your GAG/ASTD/ALS license key")
 @app_commands.describe(key_type="Type of key (GAG, ASTD, or ALS)", action="Action to perform")
 @app_commands.choices(key_type=[
@@ -1186,7 +1250,7 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
             resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
             embed = create_embed(
                 f"{key_type} License Key",
-                f"**Key ID:** `{key_type}-{key.key_id}`\n"
+                f"**Key ID:** `{key.key_id}`\n"
                 f"**Status:** {status}\n"
                 f"**Days Left:** {days_left}\n"
                 f"**HWID:** `{key.hwid}`\n"
@@ -1206,14 +1270,17 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
             for key in matching_keys:
                 result = await KeyManager.reset_key(key.key_id, unlimited_resets=unlimited)
                 reset_results.append((key, result))
-            # Always fetch the updated key from storage
-            key = matching_keys[0]
-            updated_key = await KeyManager.get_key(key.key_id)
-            resets_left = "∞" if updated_key.resets_left >= 999999 else updated_key.resets_left
+            
+            # Fetch updated resets_left after reset
+            users_data = await storage.get("users", {})
+            user_data = users_data.get(str(interaction.user.id), {})
+            resets_left = user_data.get("resets_left", {}).get(key_type, 7)
+            resets_left_display = "∞" if unlimited else resets_left
+
             if reset_results[0][1]:
                 embed = create_embed(
                     "Key Reset",
-                    f"Your {key_type} license key has been reset. Resets Left: {resets_left}"
+                    f"Your {key_type} license key has been reset. Resets Left: {resets_left_display}"
                 )
             else:
                 embed = create_error_embed("No Resets Left", f"You have no resets left for this key.")
@@ -1267,7 +1334,7 @@ async def create_key(interaction: discord.Interaction, key_type: str, duration: 
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-        # If days==0, treat as permanent
+        
         license_key = await KeyManager.create_key(key_type, user.id, hwid, days, name)
         expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
         embed = create_embed(
@@ -1428,17 +1495,6 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
                 keys.append(LicenseKey.from_dict(key_info))
         else:
             keys = await KeyManager.get_keys_by_type(key_type)
-
-        if not keys:
-            embed = create_error_embed("No Keys Found", f"No {key_type} keys found.")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        keys.sort(key=lambda x: x.created_at, reverse=True)
-
-        page = 0
-        page_size = 10
-        max_page = (len(keys) - 1) // page_size
 
         if not keys:
             embed = create_error_embed("No Keys Found", f"No {key_type} keys found.")
@@ -1721,8 +1777,7 @@ async def setup_key_message(
                     "• View your current key details\n\n"
                     "**Requirements**\n"
                     "You must have the **Mango Premium** role to use these features.\n\n"
-                    "Click the button below to manage your ASTD license key",
-                    color=0x00ff00
+                    "Click the button below to manage your ASTD license key"
                 )
                 msg = await resolved_astd.send(embed=astd_embed, view=ASTDPanelView())
                 sent.append(f"ASTD panel sent to {resolved_astd.mention}")
@@ -1739,8 +1794,7 @@ async def setup_key_message(
                     "• View your current key details\n\n"
                     "**Requirements**\n"
                     "You must have the **Mango Premium** role to use these features.\n\n"
-                    "Click the button below to manage your ALS license key",
-                    color=0x00ff00
+                    "Click the button below to manage your ALS license key"
                 )
                 msg = await resolved_als.send(embed=als_embed, view=ALSPanelView())
                 sent.append(f"ALS panel sent to {resolved_als.mention}")
@@ -1758,8 +1812,7 @@ async def setup_key_message(
                         "• View your current key details\n\n"
                         "**Requirements**\n"
                         "You must have the **Mango Premium** role to use these features.\n\n"
-                        "Click the button below to manage your GAG license key",
-                        color=0x00ff00
+                        "Click the button below to manage your GAG license key"
                     )
                     msg = await resolved_gag.send(embed=gag_embed, view=GAGPanelView())
                     sent.append(f"GAG panel sent to {resolved_gag.mention}")
@@ -1914,6 +1967,90 @@ async def deletekeysystem(interaction: discord.Interaction):
         embed = create_error_embed("Error", "An error occurred while deleting the key system.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# New enhanced commands for better system management
+
+@bot.tree.command(name="key_stats", description="View your personal key statistics")
+async def key_stats(interaction: discord.Interaction):
+    try:
+        user_keys = await KeyManager.get_user_keys(interaction.user.id)
+        if not user_keys:
+            embed = create_error_embed("No Keys", "You don't have any license keys.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        active_keys = [k for k in user_keys if not k.is_expired()]
+        expired_keys = [k for k in user_keys if k.is_expired()]
+        
+        key_types = {}
+        for key in user_keys:
+            key_types[key.key_type] = key_types.get(key.key_type, 0) + 1
+
+        users_data = await storage.get("users", {})
+        user_data = users_data.get(str(interaction.user.id), {})
+        resets_info = user_data.get("resets_left", {})
+
+        embed = create_embed(
+            f"Your Key Statistics",
+            f"**Total Keys:** {len(user_keys)}\n"
+            f"**Active Keys:** {len(active_keys)}\n"
+            f"**Expired Keys:** {len(expired_keys)}\n\n"
+            f"**Key Types:**\n" + 
+            "\n".join([f"• {k_type}: {count}" for k_type, count in key_types.items()]) +
+            f"\n\n**Resets Left:**\n" +
+            "\n".join([f"• {k_type}: {'∞' if resets >= 999999 else resets}" for k_type, resets in resets_info.items()])
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in key_stats: {e}")
+        embed = create_error_embed("Error", "An error occurred while fetching your statistics.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="system_stats", description="View detailed system statistics (Manager+)")
+async def system_stats(interaction: discord.Interaction):
+    try:
+        if not await has_key_role(interaction):
+            embed = create_error_embed("Permission Denied", "You don't have permission to view system statistics.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        keys_data = await storage.get("keys", {})
+        users_data = await storage.get("users", {})
+        settings = await storage.get("settings", {})
+
+        total_keys = len(keys_data)
+        total_users = len(users_data)
+        
+        key_type_stats = {"GAG": 0, "ASTD": 0, "ALS": 0}
+        active_by_type = {"GAG": 0, "ASTD": 0, "ALS": 0}
+        
+        for key_info in keys_data.values():
+            key = LicenseKey.from_dict(key_info)
+            key_type_stats[key.key_type] = key_type_stats.get(key.key_type, 0) + 1
+            if not key.is_expired():
+                active_by_type[key.key_type] = active_by_type.get(key.key_type, 0) + 1
+
+        embed = create_embed(
+            "System Statistics",
+            f"**📊 Overall Stats**\n"
+            f"• Total Keys: {total_keys}\n"
+            f"• Total Users: {total_users}\n"
+            f"• Active Keys: {sum(active_by_type.values())}\n"
+            f"• Expired Keys: {total_keys - sum(active_by_type.values())}\n\n"
+            f"**🔑 By Key Type**\n" +
+            "\n".join([f"• {k_type}: {total} total, {active_by_type[k_type]} active" 
+                      for k_type, total in key_type_stats.items()]) +
+            f"\n\n**⚙️ System Settings**\n"
+            f"• Max Keys per User: {settings.get('max_keys_per_user', 3)}\n"
+            f"• Default Duration: {settings.get('default_key_duration', '1y')}\n"
+            f"• Maintenance Mode: {'🔴 ON' if settings.get('maintenance_mode') else '🟢 OFF'}\n"
+            f"• Auto Cleanup: {'✅' if settings.get('auto_expire_cleanup') else '❌'}"
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in system_stats: {e}")
+        embed = create_error_embed("Error", "An error occurred while fetching system statistics.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # Run the bot
 if __name__ == "__main__":
     if not TOKEN:
@@ -1932,4 +2069,3 @@ if __name__ == "__main__":
         logger.error(f"Failed to start bot: {e}")
         print(f"Failed to start bot: {e}")
         exit(1)
-# End of file
