@@ -947,12 +947,16 @@ async def help_command(interaction: discord.Interaction):
             manager = await has_manager_role(interaction)
         except Exception:
             manager = False
+        
         access_level = "OWNER" if owner else ("ADMIN" if admin else ("MANAGER" if manager else ("User" if is_admin else "User")))
+        
         embed = discord.Embed(
             title="\U0001F511 License Bot Commands",
             description="Here are all the available commands:",
             color=0x00ff00
         )
+        
+        # User Commands - Always shown
         embed.add_field(
             name="\U0001F464 User Commands",
             value=(
@@ -961,31 +965,49 @@ async def help_command(interaction: discord.Interaction):
             ),
             inline=False
         )
-        # Show manager/admin commands if manager or admin
-        if manager or admin:
+        
+        # Manager Commands - Show for Manager, Admin, and Owner
+        if manager or admin or owner:
             embed.add_field(
-                name="\U0001F527 Manager/Admin Commands",
+                name="\U0001F527 Manager Commands",
                 value=(
                     "`/create_key` - Create a new GAG/ASTD/ALS license key\n"
                     "`/check_license` - Check license status by HWID or user\n"
                     "`/delete_key` - Delete a license key\n"
-                    "`/delete_all_key` - Delete all keys for a user :warning:\n"
                     "`/list_keys` - List all license keys (GAG, ASTD, ALS) with pagination\n"
-                    "`/user_lookup` - Look up license info for a user\n"
                     "`/register_user` - Register a user with HWID\n"
                     "`/check_hwid` - Check HWID status\n"
                     "`/health` - Check system health\n"
-                    "`/setup_key_message` - Create ASTD/ALS/GAG key management panel\n"
+                    "`/setup_key_message` - Create ASTD/ALS/GAG key management panel"
+                ),
+                inline=False
+            )
+        
+        # Admin Commands - Show for Admin and Owner
+        if admin or owner:
+            embed.add_field(
+                name="\U0001F6E1\ufe0f Admin Commands",
+                value=(
+                    "`/delete_all_key` - Delete all keys for a user \u26a0\ufe0f\n"
+                    "`/activate_key` - Activate a license key\n"
+                    "`/user_lookup` - Look up license info for a user"
+                ),
+                inline=False
+            )
+        
+        # Owner Commands - Show only for Owner
+        if owner:
+            embed.add_field(
+                name="\U0001F451 Owner Commands",
+                value=(
+                    "`/managerrole` - Set the manager role\n"
+                    "`/exclus` - Set the exclusive/admin role\n"
+                    "`/debug` - Debug the key system\n"
                     "`/deletekeysystem` - \u26a0\ufe0f Wipe all key system data (danger)"
                 ),
                 inline=False
             )
-        if owner:
-            embed.add_field(
-                name="\U0001F451 Owner Commands",
-                value="`/managerrole` - Set the manager role\n`/admin` - Set the admin role\n`/debug` - Debug the key system",
-                inline=False
-            )
+        
         embed.add_field(
             name="\u2139\ufe0f Information",
             value=(
@@ -1643,6 +1665,59 @@ async def activate_key(interaction: discord.Interaction, license_key: str):
     else:
         embed = create_error_embed("Key Not Found", f"Key `{license_key}` not found.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="user_lookup", description="Look up license info for a user")
+@app_commands.describe(user="User to look up license information for")
+async def user_lookup(interaction: discord.Interaction, user: discord.User):
+    try:
+        if not (await has_exclusive_role(interaction) or is_owner(interaction)):
+            embed = create_error_embed("Permission Denied", "You don't have permission to lookup user information.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        users_data = await storage.get("users", {})
+        user_key = str(user.id)
+        
+        if user_key not in users_data:
+            embed = create_error_embed("User Not Found", f"No data found for {user.mention}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        user_info = users_data[user_key]
+        user_keys = await KeyManager.get_user_keys(user.id)
+        
+        active_keys = [k for k in user_keys if not k.is_expired()]
+        expired_keys = [k for k in user_keys if k.is_expired()]
+        
+        key_summary = []
+        for key in user_keys:
+            status = "Expired" if key.is_expired() else "Active"
+            key_summary.append(f"**{key.key_type}:** `{key.key_id}` - {status}")
+        
+        resets_info = user_info.get("resets_left", {})
+        resets_summary = []
+        for key_type, resets in resets_info.items():
+            resets_display = "∞" if resets >= 999999 else str(resets)
+            resets_summary.append(f"{key_type}: {resets_display}")
+        
+        embed = create_embed(
+            f"User Lookup: {user.display_name}",
+            f"**Discord ID:** {user.id}\n"
+            f"**Total Keys:** {len(user_keys)}\n"
+            f"**Active Keys:** {len(active_keys)}\n"
+            f"**Expired Keys:** {len(expired_keys)}\n"
+            f"**HWIDs:** {len(user_info.get('hwids', []))}\n"
+            f"**Order:** {user_info.get('order', 'N/A')}\n"
+            f"**Registered:** {user_info.get('registered_at', 'N/A')}\n\n"
+            f"**Resets Left:**\n{chr(10).join(resets_summary) if resets_summary else 'None'}\n\n"
+            f"**Keys:**\n{chr(10).join(key_summary) if key_summary else 'No keys'}"
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        logger.error(f"Error in user_lookup: {e}")
+        embed = create_error_embed("Error", "An error occurred while looking up user information.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="deletekeysystem", description="⚠️ Wipe all key system data (danger)")
 async def deletekeysystem(interaction: discord.Interaction):
