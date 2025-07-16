@@ -1286,22 +1286,58 @@ async def list_keys(interaction: discord.Interaction, key_type: str):
 
         keys.sort(key=lambda x: x.created_at, reverse=True)
 
-        response_lines = []
-        for key in keys[:10]:
-            status = "Expired" if key.is_expired() else "Active"
-            days_left = key.days_until_expiry()
-            response_lines.append(
-                f"**{key.key_type}:** `{key.key_id}` - {status} ({days_left} days) - <@{key.user_id}>"
-            )
+        page = 0
+        page_size = 10
+        max_page = (len(keys) - 1) // page_size
 
-        if len(keys) > 10:
-            response_lines.append(f"\n... and {len(keys) - 10} more keys")
+        def get_page_lines(page):
+            start = page * page_size
+            end = start + page_size
+            lines = []
+            for key in keys[start:end]:
+                status = "Expired" if key.is_expired() else "Active"
+                days_left = key.days_until_expiry()
+                lines.append(
+                    f"**{key.key_type}:** `{key.key_id}` - {status} ({days_left} days) - <@{key.user_id}>"
+                )
+            if end < len(keys):
+                lines.append(f"\n...and {len(keys) - end} more keys")
+            return lines
 
         embed = create_embed(
             f"{key_type} License Keys ({len(keys)} total)",
-            "\n".join(response_lines)
+            "\n".join(get_page_lines(page))
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        msg = await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        # Only add pagination if more than one page
+        if max_page > 0:
+            # Add cursor emoji for next page
+            message = await interaction.original_response()
+            await message.add_reaction("➡️")
+
+            def check(reaction, user):
+                return (
+                    user.id == interaction.user.id and
+                    str(reaction.emoji) == "➡️" and
+                    reaction.message.id == message.id
+                )
+
+            import asyncio
+            try:
+                while True:
+                    reaction, user = await interaction.client.wait_for("reaction_add", timeout=60.0, check=check)
+                    if page < max_page:
+                        page += 1
+                        embed = create_embed(
+                            f"{key_type} License Keys ({len(keys)} total)",
+                            "\n".join(get_page_lines(page))
+                        )
+                        await message.edit(embed=embed)
+                    # Remove user's reaction to allow repeated paging
+                    await message.remove_reaction("➡️", user)
+            except asyncio.TimeoutError:
+                pass
 
     except Exception as e:
         logger.error(f"Error in list_keys: {e}")
@@ -1700,4 +1736,3 @@ if __name__ == "__main__":
         logger.error(f"Failed to start bot: {e}")
         print(f"Failed to start bot: {e}")
         exit(1)
-
