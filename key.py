@@ -1210,8 +1210,6 @@ async def help_command(interaction: discord.Interaction):
             value=(
                 f"**Your Access Level:** {access_level}\n"
                 f"**Key Types:** GAG, ASTD, ALS\n"
-                f"**Bot Version:** 2.1 Enhanced\n"
-                f"**New Features:** Enhanced statistics, bulk operations, system config"
             ),
             inline=False
         )
