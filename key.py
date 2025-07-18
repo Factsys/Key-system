@@ -1778,7 +1778,7 @@ async def setup_key_message(
                     "You must have the ASTD Premium role to use these features.\n\n"
                     "Click the button below to manage your ASTD license key"
                 )
-                msg = await resolved_astd.send(embed=astd_embed, view=ASTDPanelView())
+                await resolved_astd.send(embed=astd_embed, view=ASTDPanelView())
                 sent.append(f"ASTD panel sent to {resolved_astd.mention}")
         # ALS panel
         if als_channel:
@@ -1795,7 +1795,7 @@ async def setup_key_message(
                     "You must have the ALS Premium role to use these features.\n\n"
                     "Click the button below to manage your ALS license key"
                 )
-                msg = await resolved_als.send(embed=als_embed, view=ALSPanelView())
+                await resolved_als.send(embed=als_embed, view=ALSPanelView())
                 sent.append(f"ALS panel sent to {resolved_als.mention}")
         # GAG panel
         if gag_channel:
@@ -1813,14 +1813,15 @@ async def setup_key_message(
                         "You must have the GAG Premium role to use these features.\n\n"
                         "Click the button below to manage your GAG license key"
                     )
-                    msg = await resolved_gag.send(embed=gag_embed, view=GAGPanelView())
+                    await resolved_gag.send(embed=gag_embed, view=GAGPanelView())
                     sent.append(f"GAG panel sent to {resolved_gag.mention}")
             except Exception as e:
                 sent.append(f"Error sending GAG panel: {e}")
+        # Only send one response per interaction
         if sent:
-            await safe_send_response(interaction, "\n".join(sent), ephemeral=True)
+            await interaction.response.send_message("\n".join(sent), ephemeral=True)
         else:
-            await safe_send_response(interaction, "No panels sent. Please specify a channel.", ephemeral=True)
+            await interaction.response.send_message("No panels sent. Please specify a channel.", ephemeral=True)
     except Exception as e:
         logger.error(f"Error in setup_key_message: {e}")
         await safe_send_response(interaction, f"Error: {e}", ephemeral=True)
