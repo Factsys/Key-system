@@ -1,4 +1,3 @@
-
 import discord
 from discord import app_commands
 import asyncio
@@ -12,6 +11,8 @@ from typing import Optional, Dict, Any, List
 import time
 import threading
 from flask import Flask, request, jsonify
+import shutil
+from discord import File
 
 # Configure logging
 logging.basicConfig(
@@ -1776,7 +1777,7 @@ async def setup_key_message(
                     "• Reset your existing key (Only once)\n"
                     "• View your current key details\n\n"
                     "**Requirements**\n"
-                    "You must have the **Mango Premium** role to use these features.\n\n"
+                    "You must have the ASTD Premium role to use these features.\n\n"
                     "Click the button below to manage your ASTD license key"
                 )
                 msg = await resolved_astd.send(embed=astd_embed, view=ASTDPanelView())
@@ -1793,7 +1794,7 @@ async def setup_key_message(
                     "• Reset your existing key (Only once)\n"
                     "• View your current key details\n\n"
                     "**Requirements**\n"
-                    "You must have the **Mango Premium** role to use these features.\n\n"
+                    "You must have the ALS Premium role to use these features.\n\n"
                     "Click the button below to manage your ALS license key"
                 )
                 msg = await resolved_als.send(embed=als_embed, view=ALSPanelView())
@@ -1811,7 +1812,7 @@ async def setup_key_message(
                         "• Reset your existing key (Only once)\n"
                         "• View your current key details\n\n"
                         "**Requirements**\n"
-                        "You must have the **Mango Premium** role to use these features.\n\n"
+                        "You must have the GAG Premium role to use these features.\n\n"
                         "Click the button below to manage your GAG license key"
                     )
                     msg = await resolved_gag.send(embed=gag_embed, view=GAGPanelView())
@@ -2050,6 +2051,123 @@ async def system_stats(interaction: discord.Interaction):
         logger.error(f"Error in system_stats: {e}")
         embed = create_error_embed("Error", "An error occurred while fetching system statistics.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="backup_system", description="Create system backup (Owner only)")
+async def backup_system(interaction: discord.Interaction):
+    if not is_owner(interaction):
+        await interaction.response.send_message("Only the owner can use this command.", ephemeral=True)
+        return
+    try:
+        backup_dir = "backups"
+        os.makedirs(backup_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = os.path.join(backup_dir, f"data_backup_{timestamp}.json")
+        shutil.copy2(storage.filename, backup_file)
+        await interaction.response.send_message(f"Backup created: `{backup_file}`", ephemeral=True)
+        # Optionally send the file
+        await interaction.followup.send(file=File(backup_file), ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in backup_system: {e}")
+        await interaction.response.send_message(f"Error creating backup: {e}", ephemeral=True)
+
+@bot.tree.command(name="restore_system", description="Restore system from backup (Owner only)")
+@app_commands.describe(backup_filename="Backup file name to restore (from backups/ directory)")
+async def restore_system(interaction: discord.Interaction, backup_filename: str):
+    if not is_owner(interaction):
+        await interaction.response.send_message("Only the owner can use this command.", ephemeral=True)
+        return
+    try:
+        backup_dir = "backups"
+        backup_file = os.path.join(backup_dir, backup_filename)
+        if not os.path.exists(backup_file):
+            await interaction.response.send_message(f"Backup file `{backup_filename}` not found.", ephemeral=True)
+            return
+        shutil.copy2(backup_file, storage.filename)
+        storage.data = storage.load_data()
+        await interaction.response.send_message(f"System restored from `{backup_filename}`.", ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in restore_system: {e}")
+        await interaction.response.send_message(f"Error restoring backup: {e}", ephemeral=True)
+
+@bot.tree.command(name="system_config", description="Configure system settings (Owner/Admin only)")
+@app_commands.describe(setting="Setting to update (e.g. max_keys_per_user)", value="New value for the setting")
+async def system_config(interaction: discord.Interaction, setting: str = None, value: str = None):
+    # Only owner or admin (exclusive role)
+    if not (is_owner(interaction) or await has_exclusive_role(interaction)):
+        await interaction.response.send_message("Only the owner or admin can use this command.", ephemeral=True)
+        return
+    try:
+        settings = await storage.get("settings", {})
+        if setting and value is not None:
+            # Try to cast value to int/bool if possible
+            if value.lower() in ("true", "false"):
+                value_cast = value.lower() == "true"
+            else:
+                try:
+                    value_cast = int(value)
+                except ValueError:
+                    value_cast = value
+            settings[setting] = value_cast
+            await storage.set("settings", settings)
+            await interaction.response.send_message(f"Setting `{setting}` updated to `{value_cast}`.", ephemeral=True)
+        else:
+            # Show all settings
+            lines = [f"`{k}`: `{v}`" for k, v in settings.items()]
+            embed = create_embed("System Settings", "\n".join(lines))
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in system_config: {e}")
+        await interaction.response.send_message(f"Error updating settings: {e}", ephemeral=True)
+
+@bot.tree.command(name="bulk_operations", description="Perform bulk operations on keys (Admin/Owner only)")
+@app_commands.describe(
+    action="Action to perform (delete, activate, deactivate)",
+    key_type="Type of key (GAG, ALS, ASTD, ALL)",
+    user: discord.User = None
+)
+@app_commands.choices(action=[
+    app_commands.Choice(name="Delete", value="delete"),
+    app_commands.Choice(name="Activate", value="activate"),
+    app_commands.Choice(name="Deactivate", value="deactivate")
+])
+@app_commands.choices(key_type=[
+    app_commands.Choice(name="GAG", value="GAG"),
+    app_commands.Choice(name="ALS", value="ALS"),
+    app_commands.Choice(name="ASTD", value="ASTD"),
+    app_commands.Choice(name="ALL", value="ALL")
+])
+async def bulk_operations(interaction: discord.Interaction, action: str, key_type: str, user: discord.User = None):
+    if not (is_owner(interaction) or await has_exclusive_role(interaction)):
+        await interaction.response.send_message("Only the owner or admin can use this command.", ephemeral=True)
+        return
+    try:
+        keys_data = await storage.get("keys", {})
+        affected_keys = []
+        for key_id, key_info in keys_data.items():
+            if (key_type == "ALL" or key_info["key_type"] == key_type) and (not user or key_info["user_id"] == user.id):
+                affected_keys.append(key_id)
+        count = 0
+        if action == "delete":
+            for key_id in affected_keys:
+                if await KeyManager.delete_key(key_id):
+                    count += 1
+            await interaction.response.send_message(f"Deleted {count} keys.", ephemeral=True)
+        elif action == "activate":
+            for key_id in affected_keys:
+                if await KeyManager.activate_key(key_id):
+                    count += 1
+            await interaction.response.send_message(f"Activated {count} keys.", ephemeral=True)
+        elif action == "deactivate":
+            for key_id in affected_keys:
+                keys_data[key_id]["status"] = "deactivated"
+                count += 1
+            await storage.set("keys", keys_data)
+            await interaction.response.send_message(f"Deactivated {count} keys.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Invalid action.", ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in bulk_operations: {e}")
+        await interaction.response.send_message(f"Error in bulk operations: {e}", ephemeral=True)
 
 # Run the bot
 if __name__ == "__main__":
