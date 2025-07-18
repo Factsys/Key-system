@@ -202,7 +202,7 @@ class KeyManager:
                 resets_left_for_type = resets_info.get(key_type, 7)
                 if resets_left_for_type <= 0:
                     raise Exception(f"No resets left for {key_type} key.")
-        
+
         key_id = KeyManager.generate_key(key_type, user_id, hwid)
         if duration_days == 0:
             expires_at = datetime(year=9999, month=12, day=31)
@@ -242,7 +242,7 @@ class KeyManager:
         }
         if hwid not in users_data[user_key]["hwids"]:
             users_data[user_key]["hwids"].append(hwid)
-        
+
         # Save resets_left for this key_type
         if "resets_left" not in users_data[user_key]:
             users_data[user_key]["resets_left"] = {}
@@ -416,19 +416,51 @@ async def has_astd_bypass_role(interaction: discord.Interaction) -> bool:
     return False
 
 async def has_astd_access(interaction: discord.Interaction) -> bool:
-    """Check if user has access to ASTD features - requires specific role"""
+    """Check if user has access to ASTD features - requires ASTD role"""
     if is_owner(interaction):
         return True
     if await has_astd_bypass_role(interaction):
         return True
-    # Only allow users with the specific role ID 1378078542457344061
+    # Check for ASTD role (1393695198940368936) or Mango Prem role (1378078542457344061)
     if hasattr(interaction, 'guild') and interaction.guild:
         try:
             member = await interaction.guild.fetch_member(interaction.user.id)
         except Exception:
             member = interaction.guild.get_member(interaction.user.id)
         if member and member.roles:
-            return any(role.id == 1378078542457344061 for role in member.roles)
+            return any(role.id in [1393695198940368936, 1378078542457344061] for role in member.roles)
+    return False
+
+async def has_als_access(interaction: discord.Interaction) -> bool:
+    """Check if user has access to ALS features - requires ALS role"""
+    if is_owner(interaction):
+        return True
+    if await has_astd_bypass_role(interaction):
+        return True
+    # Check for ALS role (1393695013401264300) or Mango Prem role (1378078542457344061)
+    if hasattr(interaction, 'guild') and interaction.guild:
+        try:
+            member = await interaction.guild.fetch_member(interaction.user.id)
+        except Exception:
+            member = interaction.guild.get_member(interaction.user.id)
+        if member and member.roles:
+            return any(role.id in [1393695013401264300, 1378078542457344061] for role in member.roles)
+    return False
+
+async def has_gag_access(interaction: discord.Interaction) -> bool:
+    """Check if user has access to GAG features - requires GAG role"""
+    if is_owner(interaction):
+        return True
+    if await has_astd_bypass_role(interaction):
+        return True
+    # Check for GAG role (1395810570497687774) or Mango Prem role (1378078542457344061)
+    if hasattr(interaction, 'guild') and interaction.guild:
+        try:
+            member = await interaction.guild.fetch_member(interaction.user.id)
+        except Exception:
+            member = interaction.guild.get_member(interaction.user.id)
+        if member and member.roles:
+            return any(role.id in [1395810570497687774, 1378078542457344061] for role in member.roles)
     return False
 
 def create_embed(title: str, description: str, color: int = 0xff69b4) -> discord.Embed:
@@ -674,7 +706,7 @@ class ALSPanelView(discord.ui.View):
 
     @discord.ui.button(label="Manage Your ALS License Key", style=discord.ButtonStyle.primary, custom_id="manage_als_key")
     async def manage_als_key(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await has_astd_access(interaction):
+        if not await has_als_access(interaction):
             await safe_send_response(interaction, "You don't have the required role to manage ALS keys.", ephemeral=True)
             return
         await safe_send_response(
@@ -695,7 +727,7 @@ class ALSGenerateKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Generate Key", style=discord.ButtonStyle.primary, custom_id="generate_als_key")
     async def callback(self, interaction: discord.Interaction):
-        if not await has_astd_access(interaction):
+        if not await has_als_access(interaction):
             await safe_send_response(interaction, "You don't have the required role to generate ALS keys.", ephemeral=True)
             return
         user = interaction.user
@@ -729,7 +761,7 @@ class ALSResetKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Reset Key", style=discord.ButtonStyle.danger, custom_id="reset_als_key")
     async def callback(self, interaction: discord.Interaction):
-        if not await has_astd_access(interaction):
+        if not await has_als_access(interaction):
             await safe_send_response(interaction, "You don't have the required role to reset ALS keys.", ephemeral=True)
             return
         user = interaction.user
@@ -774,7 +806,7 @@ class ALSViewKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="View Key", style=discord.ButtonStyle.secondary, custom_id="view_als_key")
     async def callback(self, interaction: discord.Interaction):
-        if not await has_astd_access(interaction):
+        if not await has_als_access(interaction):
             await interaction.response.send_message("You don't have the required role to view ALS keys.", ephemeral=True)
             return
         user = interaction.user
@@ -806,7 +838,7 @@ class GAGPanelView(discord.ui.View):
 
     @discord.ui.button(label="Manage Your GAG License Key", style=discord.ButtonStyle.primary, custom_id="manage_gag_key")
     async def manage_gag_key(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await has_astd_access(interaction):
+        if not await has_gag_access(interaction):
             await safe_send_response(interaction, "You don't have the required role to manage GAG keys.", ephemeral=True)
             return
         await safe_send_response(
@@ -827,7 +859,7 @@ class GAGGenerateKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Generate Key", style=discord.ButtonStyle.primary, custom_id="generate_gag_key")
     async def callback(self, interaction: discord.Interaction):
-        if not await has_astd_access(interaction):
+        if not await has_gag_access(interaction):
             await safe_send_response(interaction, "You don't have the required role to generate GAG keys.", ephemeral=True)
             return
         user = interaction.user
@@ -861,7 +893,7 @@ class GAGResetKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Reset Key", style=discord.ButtonStyle.danger, custom_id="reset_gag_key")
     async def callback(self, interaction: discord.Interaction):
-        if not await has_astd_access(interaction):
+        if not await has_gag_access(interaction):
             await safe_send_response(interaction, "You don't have the required role to reset GAG keys.", ephemeral=True)
             return
         user = interaction.user
@@ -906,7 +938,7 @@ class GAGViewKeyButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="View Key", style=discord.ButtonStyle.secondary, custom_id="view_gag_key")
     async def callback(self, interaction: discord.Interaction):
-        if not await has_astd_access(interaction):
+        if not await has_gag_access(interaction):
             await interaction.response.send_message("You don't have the required role to view GAG keys.", ephemeral=True)
             return
         user = interaction.user
@@ -1085,11 +1117,11 @@ def get_stats():
     """Get key system statistics"""
     keys_data = storage.data.get("keys", {})
     users_data = storage.data.get("users", {})
-    
+
     total_keys = len(keys_data)
     active_keys = 0
     expired_keys = 0
-    
+
     for key_info in keys_data.values():
         try:
             expires_at = datetime.fromisoformat(key_info["expires_at"])
@@ -1099,7 +1131,7 @@ def get_stats():
                 active_keys += 1
         except:
             expired_keys += 1
-    
+
     return jsonify({
         "total_keys": total_keys,
         "active_keys": active_keys,
@@ -1138,15 +1170,15 @@ async def help_command(interaction: discord.Interaction):
             manager = await has_manager_role(interaction)
         except Exception:
             manager = False
-        
+
         access_level = "OWNER" if owner else ("ADMIN" if admin else ("MANAGER" if manager else ("User" if is_admin else "User")))
-        
+
         embed = discord.Embed(
             title="\U0001F511 License Bot Commands",
             description="Here are all the available commands:",
             color=0xff69b4
         )
-        
+
         # User Commands - Always shown
         embed.add_field(
             name="\U0001F464 User Commands",
@@ -1157,7 +1189,7 @@ async def help_command(interaction: discord.Interaction):
             ),
             inline=False
         )
-        
+
         # Manager Commands - Show for Manager, Admin, and Owner
         if manager or admin or owner:
             embed.add_field(
@@ -1175,7 +1207,7 @@ async def help_command(interaction: discord.Interaction):
                 ),
                 inline=False
             )
-        
+
         # Admin Commands - Show for Admin and Owner
         if admin or owner:
             embed.add_field(
@@ -1189,7 +1221,7 @@ async def help_command(interaction: discord.Interaction):
                 ),
                 inline=False
             )
-        
+
         # Owner Commands - Show only for Owner
         if owner:
             embed.add_field(
@@ -1204,7 +1236,7 @@ async def help_command(interaction: discord.Interaction):
                 ),
                 inline=False
             )
-        
+
         embed.add_field(
             name="\u2139\ufe0f Information",
             value=(
@@ -1269,7 +1301,7 @@ async def manage_key(interaction: discord.Interaction, key_type: str, action: st
             for key in matching_keys:
                 result = await KeyManager.reset_key(key.key_id, unlimited_resets=unlimited)
                 reset_results.append((key, result))
-            
+
             # Fetch updated resets_left after reset
             users_data = await storage.get("users", {})
             user_data = users_data.get(str(interaction.user.id), {})
@@ -1318,12 +1350,12 @@ async def create_key(interaction: discord.Interaction, key_type: str, duration: 
             embed = create_error_embed("Invalid Duration", "Duration must be between 1 hour and 10 years, or 'permanent'.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-        
+
         # Auto-generate HWID if not provided
         if not hwid:
             import hashlib
             hwid = hashlib.sha256(f"computer_{user.id}_{user.name}".encode()).hexdigest()[:16]
-        
+
         user_keys = await KeyManager.get_user_keys(user.id)
         existing_keys = [k for k in user_keys if k.key_type == key_type and not k.is_expired()]
         if existing_keys:
@@ -1333,7 +1365,7 @@ async def create_key(interaction: discord.Interaction, key_type: str, duration: 
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-        
+
         license_key = await KeyManager.create_key(key_type, user.id, hwid, days, name)
         expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
         embed = create_embed(
@@ -1760,8 +1792,12 @@ async def setup_key_message(
 ):
     try:
         if not await has_astd_access(interaction):
-            await safe_send_response(interaction, "You don't have the required role to setup key panels.", ephemeral=True)
+            await interaction.response.send_message("You don't have the required role to setup key panels.", ephemeral=True)
             return
+        
+        # Defer the response to give us time to process
+        await interaction.response.defer(ephemeral=True)
+        
         sent = []
         # ASTD panel
         if astd_channel:
@@ -1799,32 +1835,33 @@ async def setup_key_message(
                 sent.append(f"ALS panel sent to {resolved_als.mention}")
         # GAG panel
         if gag_channel:
-            try:
-                resolved_gag = await resolve_channel(interaction.guild, gag_channel)
-                if resolved_gag:
-                    gag_embed = create_embed(
-                        "🔑 GAG License Key Management",
-                        "Manage your license key for GAG\n\n"
-                        "**Available Options**\n"
-                        "• Generate a new license key\n"
-                        "• Reset your existing key (Only once)\n"
-                        "• View your current key details\n\n"
-                        "**Requirements**\n"
-                        "You must have the GAG Premium role to use these features.\n\n"
-                        "Click the button below to manage your GAG license key"
-                    )
-                    await resolved_gag.send(embed=gag_embed, view=GAGPanelView())
-                    sent.append(f"GAG panel sent to {resolved_gag.mention}")
-            except Exception as e:
-                sent.append(f"Error sending GAG panel: {e}")
-        # Only send one response per interaction
+            resolved_gag = await resolve_channel(interaction.guild, gag_channel)
+            if resolved_gag:
+                gag_embed = create_embed(
+                    "🔑 GAG License Key Management",
+                    "Manage your license key for GAG\n\n"
+                    "**Available Options**\n"
+                    "• Generate a new license key\n"
+                    "• Reset your existing key (Only once)\n"
+                    "• View your current key details\n\n"
+                    "**Requirements**\n"
+                    "You must have the GAG Premium role to use these features.\n\n"
+                    "Click the button below to manage your GAG license key"
+                )
+                await resolved_gag.send(embed=gag_embed, view=GAGPanelView())
+                sent.append(f"GAG panel sent to {resolved_gag.mention}")
+        
+        # Send single followup response
         if sent:
-            await interaction.response.send_message("\n".join(sent), ephemeral=True)
+            await interaction.followup.send("\n".join(sent), ephemeral=True)
         else:
-            await interaction.response.send_message("No panels sent. Please specify a channel.", ephemeral=True)
+            await interaction.followup.send("No panels sent. Please specify a channel.", ephemeral=True)
     except Exception as e:
         logger.error(f"Error in setup_key_message: {e}")
-        await safe_send_response(interaction, f"Error: {e}", ephemeral=True)
+        try:
+            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        except:
+            pass
 
 @bot.tree.command(name="delete_all_key", description="Delete all keys for a user")
 @app_commands.describe(user="User to delete all keys for")
@@ -1904,7 +1941,7 @@ async def user_lookup(interaction: discord.Interaction, user: discord.User):
 
         users_data = await storage.get("users", {})
         user_key = str(user.id)
-        
+
         if user_key not in users_data:
             embed = create_error_embed("User Not Found", f"No data found for {user.mention}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -1912,21 +1949,21 @@ async def user_lookup(interaction: discord.Interaction, user: discord.User):
 
         user_info = users_data[user_key]
         user_keys = await KeyManager.get_user_keys(user.id)
-        
+
         active_keys = [k for k in user_keys if not k.is_expired()]
         expired_keys = [k for k in user_keys if k.is_expired()]
-        
+
         key_summary = []
         for key in user_keys:
             status = "Expired" if key.is_expired() else "Active"
             key_summary.append(f"**{key.key_type}:** `{key.key_id}` - {status}")
-        
+
         resets_info = user_info.get("resets_left", {})
         resets_summary = []
         for key_type, resets in resets_info.items():
             resets_display = "∞" if resets >= 999999 else str(resets)
             resets_summary.append(f"{key_type}: {resets_display}")
-        
+
         embed = create_embed(
             f"User Lookup: {user.display_name}",
             f"**Discord ID:** {user.id}\n"
@@ -1980,7 +2017,7 @@ async def key_stats(interaction: discord.Interaction):
 
         active_keys = [k for k in user_keys if not k.is_expired()]
         expired_keys = [k for k in user_keys if k.is_expired()]
-        
+
         key_types = {}
         for key in user_keys:
             key_types[key.key_type] = key_types.get(key.key_type, 0) + 1
@@ -2019,10 +2056,10 @@ async def system_stats(interaction: discord.Interaction):
 
         total_keys = len(keys_data)
         total_users = len(users_data)
-        
+
         key_type_stats = {"GAG": 0, "ASTD": 0, "ALS": 0}
         active_by_type = {"GAG": 0, "ASTD": 0, "ALS": 0}
-        
+
         for key_info in keys_data.values():
             key = LicenseKey.from_dict(key_info)
             key_type_stats[key.key_type] = key_type_stats.get(key.key_type, 0) + 1
