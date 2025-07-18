@@ -2123,7 +2123,7 @@ async def system_config(interaction: discord.Interaction, setting: str = None, v
 @app_commands.describe(
     action="Action to perform (delete, activate, deactivate)",
     key_type="Type of key (GAG, ALS, ASTD, ALL)",
-    user: discord.User = None
+    user="User to filter by (optional)"
 )
 @app_commands.choices(action=[
     app_commands.Choice(name="Delete", value="delete"),
