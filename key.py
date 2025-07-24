@@ -1039,6 +1039,20 @@ def check_key():
         if key_info.get("status", "deactivated") == "activated":
             if hwid and key_info.get("hwid", "") != hwid:
                 return jsonify({"valid": False, "message": "Key is registered to another computer"})
+        else:
+            # If key is not activated and HWID matches, activate it
+            if hwid and key_info.get("hwid", "") == hwid:
+                key_info["status"] = "activated"
+                keys_data[key] = key_info
+                storage.data["keys"] = keys_data
+                
+                # Update user data as well
+                users_data = storage.data.get("users", {})
+                user_id = str(key_info["user_id"])
+                if user_id in users_data and key in users_data[user_id]["keys"]:
+                    users_data[user_id]["keys"][key]["status"] = "activated"
+                    storage.data["users"] = users_data
+                storage.save_sync(storage.data)
 
         try:
             if expires_at.year >= 9999:
@@ -1049,13 +1063,16 @@ def check_key():
         except Exception:
             days_left = None
 
+        # Get current status (might have been updated above)
+        current_status = key_info.get("status", "deactivated")
+        
         resp = {
             "valid": True,
             "key_id": key_info.get("key_id", key),
             "key_type": key_info.get("key_type", ""),
             "user_id": key_info.get("user_id", ""),
             "hwid": key_info.get("hwid", ""),
-            "status": key_info.get("status", "deactivated"),
+            "status": current_status,
             "expires_at": key_info.get("expires_at", ""),
             "created_at": key_info.get("created_at", ""),
             "name": key_info.get("name", ""),
