@@ -1208,8 +1208,8 @@ def get_stats():
     })
 
 def run_web():
-    port = int(os.getenv("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
 
 # Start the web server in a background thread
 web_thread = threading.Thread(target=run_web)
