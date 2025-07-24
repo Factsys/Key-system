@@ -26,28 +26,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
-CLOUDFLARE_URL = "https://key-checker.yunoblasesh.workers.dev/add?token=secretkey123"
+# Configuration - Dual URL support for redundancy
+CLOUDFLARE_URLS = [
+    "https://key-checker.yunoblasesh.workers.dev/add?token=secretkey123",
+    "https://factsy.yunoblasesh.workers.dev/add?token=secretkey123"
+]
 
 def add_key_to_cloudflare(key: str, duration_days: int = 365):
     """
-    Sends a generated key with expiry date to the Cloudflare Worker API.
+    Sends a generated key with expiry date to multiple Cloudflare Worker APIs for redundancy.
     """
     expires = (datetime.utcnow() + timedelta(days=duration_days)).isoformat() + "Z"
     payload = {
         "key": key,
         "expires": expires
     }
-    try:
-        response = requests.post(CLOUDFLARE_URL, json=payload)
-        if response.status_code == 200:
-            logger.info(f"[OK] Key {key} stored in Cloudflare. Expires: {expires}")
-            return True
-        else:
-            logger.error(f"[ERROR] Failed to store key {key}. Response: {response.text}")
-            return False
-    except Exception as e:
-        logger.error(f"[ERROR] Cloudflare request failed: {e}")
+    
+    success_count = 0
+    total_urls = len(CLOUDFLARE_URLS)
+    
+    for i, url in enumerate(CLOUDFLARE_URLS):
+        try:
+            response = requests.post(url, json=payload, timeout=10)
+            if response.status_code == 200:
+                logger.info(f"[OK] Key {key} stored in Cloudflare URL {i+1}/{total_urls}. Expires: {expires}")
+                success_count += 1
+            else:
+                logger.error(f"[ERROR] Failed to store key {key} at URL {i+1}/{total_urls}. Response: {response.text}")
+        except Exception as e:
+            logger.error(f"[ERROR] Cloudflare request failed for URL {i+1}/{total_urls}: {e}")
+    
+    # Consider it successful if at least one URL worked
+    if success_count > 0:
+        logger.info(f"[OK] Key {key} successfully stored in {success_count}/{total_urls} Cloudflare endpoints")
+        return True
+    else:
+        logger.error(f"[ERROR] Failed to store key {key} in all {total_urls} Cloudflare endpoints")
         return False
 
 OWNER_IDS = []
@@ -1824,11 +1838,11 @@ async def setup_key_message(
 ):
     try:
         if not await has_astd_access(interaction):
-            await interaction.response.send_message("You don't have the required role to setup key panels.", ephemeral=True)
+            await safe_send_response(interaction, "You don't have the required role to setup key panels.", ephemeral=True)
             return
 
-        # Defer the response to give us time to process
-        await interaction.response.defer(ephemeral=True)
+        # Respond immediately to avoid timeout
+        await safe_send_response(interaction, "Setting up key panels...", ephemeral=True)
 
         sent = []
         # ASTD panel
@@ -1883,15 +1897,18 @@ async def setup_key_message(
                 await resolved_gag.send(embed=gag_embed, view=GAGPanelView())
                 sent.append(f"GAG panel sent to {resolved_gag.mention}")
 
-        # Send single followup response
+        # Send followup response
         if sent:
-            await interaction.followup.send("\n".join(sent), ephemeral=True)
+            await interaction.followup.send("✅ " + "\n".join(sent), ephemeral=True)
         else:
-            await interaction.followup.send("No panels sent. Please specify a channel.", ephemeral=True)
+            await interaction.followup.send("❌ No panels sent. Please specify a channel.", ephemeral=True)
     except Exception as e:
         logger.error(f"Error in setup_key_message: {e}")
         try:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"Error: {e}", ephemeral=True)
         except:
             pass
 
