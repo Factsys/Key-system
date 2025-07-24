@@ -13,6 +13,7 @@ import threading
 from flask import Flask, request, jsonify
 import shutil
 from discord import File
+import requests
 
 # Configure logging
 logging.basicConfig(
@@ -26,6 +27,29 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
+CLOUDFLARE_URL = "https://key-checker.yunoblasesh.workers.dev/add?token=secretkey123"
+
+def add_key_to_cloudflare(key: str, duration_days: int = 365):
+    """
+    Sends a generated key with expiry date to the Cloudflare Worker API.
+    """
+    expires = (datetime.utcnow() + timedelta(days=duration_days)).isoformat() + "Z"
+    payload = {
+        "key": key,
+        "expires": expires
+    }
+    try:
+        response = requests.post(CLOUDFLARE_URL, json=payload)
+        if response.status_code == 200:
+            logger.info(f"[OK] Key {key} stored in Cloudflare. Expires: {expires}")
+            return True
+        else:
+            logger.error(f"[ERROR] Failed to store key {key}. Response: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"[ERROR] Cloudflare request failed: {e}")
+        return False
+
 OWNER_IDS = []
 owner_ids_str = os.getenv("OWNER_ID", "776883692983156736,829256979716898826,1334138321412296725")
 if owner_ids_str:
@@ -251,6 +275,14 @@ class KeyManager:
         else:
             users_data[user_key]["resets_left"][key_type] = 999999
         await storage.set("users", users_data)
+        
+        # Store key in Cloudflare
+        cloudflare_success = add_key_to_cloudflare(key_id, duration_days)
+        if cloudflare_success:
+            logger.info(f"Key {key_id} successfully stored in both local DB and Cloudflare")
+        else:
+            logger.warning(f"Key {key_id} stored locally but failed to store in Cloudflare")
+        
         logger.info(f"Created {key_type} key {key_id} for user {user_id}")
         return license_key
 
@@ -1794,10 +1826,10 @@ async def setup_key_message(
         if not await has_astd_access(interaction):
             await interaction.response.send_message("You don't have the required role to setup key panels.", ephemeral=True)
             return
-        
+
         # Defer the response to give us time to process
         await interaction.response.defer(ephemeral=True)
-        
+
         sent = []
         # ASTD panel
         if astd_channel:
@@ -1850,7 +1882,7 @@ async def setup_key_message(
                 )
                 await resolved_gag.send(embed=gag_embed, view=GAGPanelView())
                 sent.append(f"GAG panel sent to {resolved_gag.mention}")
-        
+
         # Send single followup response
         if sent:
             await interaction.followup.send("\n".join(sent), ephemeral=True)
