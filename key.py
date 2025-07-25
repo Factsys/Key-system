@@ -635,6 +635,10 @@ class LicenseBot(discord.Client):
         logger.info("Setting up bot commands...")
         await self.tree.sync()
         logger.info("Commands synced successfully")
+        
+        # Start the auto-sync task
+        self.loop.create_task(sync_keys())
+        logger.info("Auto-sync task started")
 
     async def on_ready(self):
         if self.user:
@@ -2396,8 +2400,6 @@ if __name__ == "__main__":
         exit(1)
 
     try:
-        # Start the auto-sync task
-        bot.loop.create_task(sync_keys())
         bot.run(TOKEN)
     except discord.LoginFailure:
         logger.error("Invalid Discord bot token. Please check your TOKEN environment variable.")
