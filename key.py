@@ -641,9 +641,9 @@ class LicenseBot(discord.Client):
         await self.tree.sync()
         logger.info("Commands synced successfully")
 
-        # Start the auto-sync task
-        self.loop.create_task(sync_keys())
-        logger.info("Auto-sync task started")
+        # Auto-sync disabled - no /list endpoint available
+        # self.loop.create_task(sync_keys())
+        logger.info("Auto-sync disabled - using individual key sync instead")
 
     async def on_ready(self):
         if self.user:
@@ -1076,7 +1076,7 @@ def check_key():
         except Exception:
             return jsonify({"valid": False, "message": "Invalid key data"})
 
-        # Always sync with Cloudflare first
+        # ALWAYS sync with Cloudflare first to get the latest activation status
         try:
             import asyncio
             loop = asyncio.new_event_loop()
@@ -1088,10 +1088,11 @@ def check_key():
                 cf_status = cf_data.get("status", "").lower()
                 cf_hwid = cf_data.get("hwid", "")
 
-                # Update local data with Cloudflare data
-                if cf_status == "active" and cf_hwid:
+                # Update local data with Cloudflare data - this is the key fix
+                if cf_status == "active":
                     key_info["status"] = "activated"
-                    key_info["hwid"] = cf_hwid
+                    if cf_hwid:
+                        key_info["hwid"] = cf_hwid
                     keys_data[key] = key_info
                     storage.data["keys"] = keys_data
 
@@ -1103,17 +1104,26 @@ def check_key():
                             users_data[user_id]["keys"] = {}
                         users_data[user_id]["keys"][key] = {
                             "status": "activated",
-                            "hwid": cf_hwid,
+                            "hwid": cf_hwid or hwid,
                             "key_type": key_info["key_type"],
                             "expires_at": key_info["expires_at"]
                         }
+                        # Add HWID to user's HWID list if not already there
+                        if cf_hwid and cf_hwid not in users_data[user_id].get("hwids", []):
+                            users_data[user_id].setdefault("hwids", []).append(cf_hwid)
                         storage.data["users"] = users_data
                     storage.save_sync(storage.data)
                     logger.info(f"Key {key} synced from Cloudflare: status={cf_status}, hwid={cf_hwid}")
+                elif cf_status == "inactive":
+                    key_info["status"] = "deactivated"
+                    keys_data[key] = key_info
+                    storage.data["keys"] = keys_data
+                    storage.save_sync(storage.data)
+                    logger.info(f"Key {key} marked as deactivated from Cloudflare")
         except Exception as e:
             logger.error(f"Error syncing with Cloudflare: {e}")
 
-        # If key has no HWID and client provides one, activate it
+        # If key has no HWID and client provides one, activate it locally too
         if not key_info.get("hwid") and hwid:
             key_info["status"] = "activated"
             key_info["hwid"] = hwid
@@ -1136,7 +1146,7 @@ def check_key():
                     users_data[user_id].setdefault("hwids", []).append(hwid)
                 storage.data["users"] = users_data
             storage.save_sync(storage.data)
-            logger.info(f"Key {key} activated with HWID {hwid}")
+            logger.info(f"Key {key} activated locally with HWID {hwid}")
 
         # If key is activated, check HWID match
         elif key_info.get("status", "deactivated") == "activated":
