@@ -2374,7 +2374,7 @@ async def view_key(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Auto-sync functionality
-CLOUDFLARE_LIST_URL = "https://key-checker.yunoblasesh.workers.dev/list?token=secretkey123"
+CLOUDFLARE_LIST_URL = "https://key-checker.yunoblasesh.workers.dev/list?token=secret"
 
 async def sync_keys():
     """Automatically sync keys from Cloudflare every 60 seconds"""
