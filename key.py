@@ -792,13 +792,14 @@ class ASTDViewKeyButton(discord.ui.Button):
             return
         key = matching_keys[0]
         
-        # Sync with Cloudflare before displaying
-        sync_key_with_cloudflare(key.key_id)
-        # Refresh key data after sync
-        user_keys = await KeyManager.get_user_keys(user.id)
-        matching_keys = [k for k in user_keys if k.key_type == "ASTD"]
-        if matching_keys:
-            key = matching_keys[0]
+        # Sync with Cloudflare using /info endpoint before displaying
+        sync_success = sync_key_with_cloudflare(key.key_id)
+        if sync_success:
+            # Refresh key data after successful sync
+            user_keys = await KeyManager.get_user_keys(user.id)
+            matching_keys = [k for k in user_keys if k.key_type == "ASTD"]
+            if matching_keys:
+                key = matching_keys[0]
         
         status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
