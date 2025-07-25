@@ -708,7 +708,8 @@ class ASTDGenerateKeyButton(discord.ui.Button):
         duration = "1y"
         days = parse_duration(duration)
         # Create key without HWID - it will be set when the client activates it
-        license_key = await KeyManager.create_key("ASTD", user.id, "", days, name="Auto-generated")
+        license_key =```python
+await KeyManager.create_key("ASTD", user.id, "", days, name="Auto-generated")
         expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
         try:
             dm_embed = create_embed(
@@ -791,20 +792,26 @@ class ASTDViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have an ASTD key.", ephemeral=True)
             return
         key = matching_keys[0]
-        
-        # Sync with Cloudflare using /info endpoint before displaying
-        sync_success = sync_key_with_cloudflare(key.key_id)
-        if sync_success:
-            # Refresh key data after successful sync
-            user_keys = await KeyManager.get_user_keys(user.id)
-            matching_keys = [k for k in user_keys if k.key_type == "ASTD"]
-            if matching_keys:
-                key = matching_keys[0]
-        
-        status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
+
+        # Get real-time data from Cloudflare
+        cf_data = await get_key_info(key.key_id)
+
+        # Use Cloudflare data if available, otherwise use local data
+        if "error" not in cf_data:
+            cf_status = cf_data.get("status", "").lower()
+            cf_hwid = cf_data.get("hwid", "")
+            status = "Activated" if cf_status == "active" else "Deactivated"
+            hwid = cf_hwid or key.hwid or "Not Set"
+
+            # Update local data with Cloudflare data
+            sync_key_with_cloudflare(key.key_id)
+        else:
+            status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
+            hwid = key.hwid or "Not Set"
+
         days_left = key.days_until_expiry()
-        hwid = key.hwid
         resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
+
         embed = discord.Embed(
             title="\U0001F511 Your ASTD License Key",
             description=f"**License Key**\n`{key.key_id}`",
@@ -904,7 +911,7 @@ class ALSResetKeyButton(discord.ui.Button):
 
         # Fetch updated resets_left after reset
         users_data = await storage.get("users", {})
-        user_data = users_data.get(str(user.id), {})
+        user_data = users_data.get(str(interaction.user.id), {})
         resets_left = user_data.get("resets_left", {}).get("ALS", 7)
         resets_left_display = "∞" if unlimited else resets_left
 
@@ -931,9 +938,25 @@ class ALSViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have an ALS key.", ephemeral=True)
             return
         key = matching_keys[0]
-        status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
+
+         # Get real-time data from Cloudflare
+        cf_data = await get_key_info(key.key_id)
+
+        # Use Cloudflare data if available, otherwise use local data
+        if "error" not in cf_data:
+            cf_status = cf_data.get("status", "").lower()
+            cf_hwid = cf_data.get("hwid", "")
+            status = "Activated" if cf_status == "active" else "Deactivated"
+            hwid = cf_hwid or key.hwid or "Not Set"
+
+            # Update local data with Cloudflare data
+            sync_key_with_cloudflare(key.key_id)
+        else:
+            status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
+            hwid = key.hwid or "Not Set"
+
+
         days_left = key.days_until_expiry()
-        hwid = key.hwid
         resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your ALS License Key",
@@ -1034,7 +1057,7 @@ class GAGResetKeyButton(discord.ui.Button):
 
         # Fetch updated resets_left after reset
         users_data = await storage.get("users", {})
-        user_data = users_data.get(str(user.id), {})
+        user_data = users_data.get(str(interaction.user.id), {})
         resets_left = user_data.get("resets_left", {}).get("GAG", 7)
         resets_left_display = "∞" if unlimited else resets_left
 
@@ -1061,9 +1084,25 @@ class GAGViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have a GAG key.", ephemeral=True)
             return
         key = matching_keys[0]
-        status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
+
+         # Get real-time data from Cloudflare
+        cf_data = await get_key_info(key.key_id)
+
+        # Use Cloudflare data if available, otherwise use local data
+        if "error" not in cf_data:
+            cf_status = cf_data.get("status", "").lower()
+            cf_hwid = cf_data.get("hwid", "")
+            status = "Activated" if cf_status == "active" else "Deactivated"
+            hwid = cf_hwid or key.hwid or "Not Set"
+
+            # Update local data with Cloudflare data
+            sync_key_with_cloudflare(key.key_id)
+        else:
+            status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
+            hwid = key.hwid or "Not Set"
+
+
         days_left = key.days_until_expiry()
-        hwid = key.hwid
         resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your GAG License Key",
@@ -1304,7 +1343,8 @@ def get_stats():
         "active_keys": active_keys,
         "expired_keys": expired_keys,
         "total_users": len(users_data),
-        "key_types": {
+        "key_types":```python
+{
             "GAG": len([k for k in keys_data.values() if k.get("key_type") == "GAG"]),
             "ASTD": len([k for k in keys_data.values() if k.get("key_type") == "ASTD"]),
             "ALS": len([k for k in keys_data.values() if k.get("key_type") == "ALS"])
@@ -1989,7 +2029,7 @@ async def setup_key_message(
             if resolved_als:
                 als_embed = create_embed(
                     "🔑 ALS License Key Management",
-                    "Manage your license key for ALS\n\n"
+                    "Manage your license key for ALS\nn"
                     "**Available Options**\n"
                     "• Generate a new license key\n"
                     "• Reset your existing key (Only once)\n"
@@ -2423,7 +2463,7 @@ async def sync_keys():
                 async with session.get(CLOUDFLARE_SYNC_URL) as response:
                     if response.status == 200:
                         data = await response.json()
-                        
+
                         # Handle different response formats from your worker
                         if isinstance(data, dict) and "keys" in data:
                             cf_keys = data["keys"]
@@ -2444,7 +2484,7 @@ async def sync_keys():
                                 # Update status from Cloudflare
                                 cf_status = cf_key.get("status", "").lower()
                                 cf_hwid = cf_key.get("hwid", "")
-                                
+
                                 if cf_status == "active" and local_key.get("status") != "activated":
                                     local_key["status"] = "activated"
                                     if cf_hwid:
