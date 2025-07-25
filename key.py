@@ -92,10 +92,26 @@ def add_key_to_cloudflare(key: str, duration_days: int = 365):
         try:
             response = requests.post(url, json=payload, timeout=10)
             if response.status_code == 200:
-                logger.info(f"[OK] Key {key} stored in Cloudflare URL {i+1}/{total_urls}. Expires: {expires}")
-                success_count += 1
+                response_data = response.json()
+                if response_data.get("success"):
+                    logger.info(f"[OK] Key {key} stored in Cloudflare URL {i+1}/{total_urls}. Expires: {expires}")
+                    success_count += 1
+                else:
+                    logger.error(f"[ERROR] Cloudflare rejected key {key} at URL {i+1}/{total_urls}: {response_data.get('error', 'Unknown error')}")
+            elif response.status_code == 401:
+                logger.error(f"[ERROR] Unauthorized at URL {i+1}/{total_urls} - check admin token")
+            elif response.status_code == 400:
+                try:
+                    error_data = response.json()
+                    logger.error(f"[ERROR] Bad request at URL {i+1}/{total_urls}: {error_data.get('error', response.text)}")
+                except:
+                    logger.error(f"[ERROR] Bad request at URL {i+1}/{total_urls}: {response.text}")
             else:
-                logger.error(f"[ERROR] Failed to store key {key} at URL {i+1}/{total_urls}. Response: {response.text}")
+                logger.error(f"[ERROR] Failed to store key {key} at URL {i+1}/{total_urls}. HTTP {response.status_code}: {response.text}")
+        except requests.exceptions.Timeout:
+            logger.error(f"[ERROR] Timeout when sending key {key} to URL {i+1}/{total_urls}")
+        except requests.exceptions.ConnectionError:
+            logger.error(f"[ERROR] Connection error when sending key {key} to URL {i+1}/{total_urls}")
         except Exception as e:
             logger.error(f"[ERROR] Cloudflare request failed for URL {i+1}/{total_urls}: {e}")
 
@@ -775,9 +791,18 @@ class ASTDViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have an ASTD key.", ephemeral=True)
             return
         key = matching_keys[0]
+        
+        # Sync with Cloudflare to get the latest data
+        sync_key_with_cloudflare(key.key_id)
+        
+        # Reload the key data after sync
+        updated_key = await KeyManager.get_key(key.key_id)
+        if updated_key:
+            key = updated_key
+        
         status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
-        hwid = key.hwid
+        hwid = key.hwid if key.hwid else "Not set"
         resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your ASTD License Key",
@@ -905,9 +930,18 @@ class ALSViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have an ALS key.", ephemeral=True)
             return
         key = matching_keys[0]
+        
+        # Sync with Cloudflare to get the latest data
+        sync_key_with_cloudflare(key.key_id)
+        
+        # Reload the key data after sync
+        updated_key = await KeyManager.get_key(key.key_id)
+        if updated_key:
+            key = updated_key
+        
         status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
-        hwid = key.hwid
+        hwid = key.hwid if key.hwid else "Not set"
         resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your ALS License Key",
@@ -1035,9 +1069,18 @@ class GAGViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have a GAG key.", ephemeral=True)
             return
         key = matching_keys[0]
+        
+        # Sync with Cloudflare to get the latest data
+        sync_key_with_cloudflare(key.key_id)
+        
+        # Reload the key data after sync
+        updated_key = await KeyManager.get_key(key.key_id)
+        if updated_key:
+            key = updated_key
+        
         status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
-        hwid = key.hwid
+        hwid = key.hwid if key.hwid else "Not set"
         resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your GAG License Key",
