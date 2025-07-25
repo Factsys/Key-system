@@ -2028,7 +2028,7 @@ async def setup_key_message(
 @bot.tree.command(name="delete_all_key", description="Delete all keys for a user")
 @app_commands.describe(user="User to delete all keys for")
 async def delete_all_key(interaction: discord.Interaction, user: discord.User):
-    try:```python
+    try:
         # Allow owners, managers, and exclusive users to delete all keys
         if not (is_owner(interaction) or await has_manager_role(interaction) or await has_exclusive_role(interaction)):
             embed = create_error_embed("Permission Denied", "You don't have permission to delete all keys.")
