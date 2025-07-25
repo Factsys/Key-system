@@ -2369,6 +2369,24 @@ async def view_key(interaction: discord.Interaction):
         embed = create_error_embed("Error", "An error occurred while viewing your key.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# Auto-sync functionality
+CLOUDFLARE_LIST_URL = "https://key-checker.yunoblasesh.workers.dev/list?token=secretkey123"
+
+async def sync_keys():
+    """Automatically sync keys from Cloudflare every 60 seconds"""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            response = requests.get(CLOUDFLARE_LIST_URL)
+            if response.status_code == 200:
+                bot.key_data = response.json()  # store in bot object
+                logger.info("[SYNC] Keys updated from Cloudflare.")
+            else:
+                logger.warning(f"[SYNC] Failed to fetch keys: HTTP {response.status_code}")
+        except Exception as e:
+            logger.error(f"[SYNC ERROR] Sync failed: {e}")
+        await asyncio.sleep(60)  # sync every 60 seconds
+
 # Run the bot
 if __name__ == "__main__":
     if not TOKEN:
@@ -2378,6 +2396,8 @@ if __name__ == "__main__":
         exit(1)
 
     try:
+        # Start the auto-sync task
+        bot.loop.create_task(sync_keys())
         bot.run(TOKEN)
     except discord.LoginFailure:
         logger.error("Invalid Discord bot token. Please check your TOKEN environment variable.")
