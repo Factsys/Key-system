@@ -708,8 +708,7 @@ class ASTDGenerateKeyButton(discord.ui.Button):
         duration = "1y"
         days = parse_duration(duration)
         # Create key without HWID - it will be set when the client activates it
-        license_key =```python
-await KeyManager.create_key("ASTD", user.id, "", days, name="Auto-generated")
+        license_key = await KeyManager.create_key("ASTD", user.id, "", days, name="Auto-generated")
         expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
         try:
             dm_embed = create_embed(
@@ -1343,8 +1342,7 @@ def get_stats():
         "active_keys": active_keys,
         "expired_keys": expired_keys,
         "total_users": len(users_data),
-        "key_types":```python
-{
+        "key_types": {
             "GAG": len([k for k in keys_data.values() if k.get("key_type") == "GAG"]),
             "ASTD": len([k for k in keys_data.values() if k.get("key_type") == "ASTD"]),
             "ALS": len([k for k in keys_data.values() if k.get("key_type") == "ALS"])
@@ -2522,6 +2520,7 @@ if __name__ == "__main__":
         bot.run(TOKEN)
     except discord.LoginFailure:
         logger.error("Invalid Discord bot token. Please check your TOKEN environment variable.")
+        
         print("Invalid Discord bot token. Please check your TOKEN environment variable.")
         exit(1)
     except Exception as e:
