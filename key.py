@@ -132,7 +132,7 @@ class Storage:
         """Load data from file, create if doesn't exist"""
         try:
             if os.path.exists(self.filename):
-                with open self.filename, "r") as f:
+                with open(self.filename, "r") as f:
                     return json.load(f)
             else:
                 default_data = {
