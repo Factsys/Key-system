@@ -2024,8 +2024,7 @@ async def delete_all_key(interaction: discord.Interaction, user: discord.User):
 
     except Exception as e:
         logger.error(f"Error in delete_all_key: {e}")
-        embed```python
- = create_error_embed("Error", "An error occurred while deleting all keys.")
+        embed = create_error_embed("Error", "An error occurred while deleting all keys.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="debug", description="Debug the key system (Owner only)")
