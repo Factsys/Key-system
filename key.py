@@ -132,7 +132,7 @@ class Storage:
         """Load data from file, create if doesn't exist"""
         try:
             if os.path.exists(self.filename):
-                with open(self.filename, "r") as f:
+                with open self.filename, "r") as f:
                     return json.load(f)
             else:
                 default_data = {
@@ -1344,7 +1344,8 @@ async def help_command(interaction: discord.Interaction):
                     "`/bulk_operations` - Perform bulk operations on keys\n"
                     "`/system_config` - Configure system settings"
                 ),
-                inline=False
+                ```text
+inline=False
             )
 
         # Owner Commands - Show only for Owner
@@ -2346,6 +2347,28 @@ async def view_key(interaction: discord.Interaction):
             if not key.is_expired():
                 # Sync with Cloudflare before showing
                 await sync_key_with_cloudflare(key.key_id)
+                status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
+                days_left = key.days_until_expiry()
+                resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
+                embed = create_embed(
+                    f"{key.key_type} License Key",
+                    f"**Key ID:** `{key.key_id}`\n"
+                    f"**Status:** {status}\n"
+                    f"**Days Left:** {days_left}\n"
+                    f"**HWID:** `{key.hwid}`\n"
+                    f"**Created:** {key.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"**Expires:** {key.expires_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"**Activation Status:** {key.status.title()}\n"
+                    f"**Resets Left:** {resets_left}"
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+        embed = create_error_embed("No Active Keys Found", "You don't have any active license keys.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in view_key: {e}")
+        embed = create_error_embed("Error", "An error occurred while viewing your key.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Run the bot
 if __name__ == "__main__":
