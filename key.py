@@ -14,6 +14,44 @@ from flask import Flask, request, jsonify
 import shutil
 from discord import File
 import requests
+import aiohttp
+
+async def get_key_info(key):
+    """Get key info from Cloudflare"""
+    try:
+        url = f"https://key-checker.yunoblasesh.workers.dev/info?key={key}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    return {"error": f"HTTP {response.status}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+async def sync_key_with_cloudflare(key):
+    """Sync local key data with Cloudflare KV data"""
+    try:
+        cf_data = await get_key_info(key)
+        if "error" not in cf_data:
+            # Update local storage with Cloudflare data
+            storage_data = await storage.get("keys", {})
+            if key in storage_data:
+                local_key = storage_data[key]
+                # Sync status and HWID from Cloudflare
+                if cf_data.get("status") == "Active":
+                    local_key["status"] = "activated"
+                    local_key["hwid"] = cf_data.get("hwid", "")
+                elif cf_data.get("status") == "Inactive":
+                    local_key["status"] = "deactivated"
+                    local_key["hwid"] = ""
+
+                storage_data[key] = local_key
+                await storage.set("keys", storage_data)
+                return True
+    except Exception as e:
+        logger.error(f"Error syncing key {key} with Cloudflare: {e}")
+    return False
 
 # Configure logging
 logging.basicConfig(
@@ -41,10 +79,10 @@ def add_key_to_cloudflare(key: str, duration_days: int = 365):
         "key": key,
         "expires": expires
     }
-    
+
     success_count = 0
     total_urls = len(CLOUDFLARE_URLS)
-    
+
     for i, url in enumerate(CLOUDFLARE_URLS):
         try:
             response = requests.post(url, json=payload, timeout=10)
@@ -55,7 +93,7 @@ def add_key_to_cloudflare(key: str, duration_days: int = 365):
                 logger.error(f"[ERROR] Failed to store key {key} at URL {i+1}/{total_urls}. Response: {response.text}")
         except Exception as e:
             logger.error(f"[ERROR] Cloudflare request failed for URL {i+1}/{total_urls}: {e}")
-    
+
     # Consider it successful if at least one URL worked
     if success_count > 0:
         logger.info(f"[OK] Key {key} successfully stored in {success_count}/{total_urls} Cloudflare endpoints")
@@ -289,14 +327,14 @@ class KeyManager:
         else:
             users_data[user_key]["resets_left"][key_type] = 999999
         await storage.set("users", users_data)
-        
+
         # Store key in Cloudflare
         cloudflare_success = add_key_to_cloudflare(key_id, duration_days)
         if cloudflare_success:
             logger.info(f"Key {key_id} successfully stored in both local DB and Cloudflare")
         else:
             logger.warning(f"Key {key_id} stored locally but failed to store in Cloudflare")
-        
+
         logger.info(f"Created {key_type} key {key_id} for user {user_id}")
         return license_key
 
@@ -1035,6 +1073,30 @@ def check_key():
         except Exception:
             return jsonify({"valid": False, "message": "Invalid key data"})
 
+        # Check Cloudflare for key usage status and update accordingly
+        cloudflare_info = get_key_info(key)
+        if "error" not in cloudflare_info:
+            cf_status = cloudflare_info.get("status", "").lower()
+            cf_hwid = cloudflare_info.get("hwid", "")
+
+            # If Cloudflare shows the key as active and has an HWID, update our local data
+            if cf_status == "active" and cf_hwid:
+                # Update the key status to activated and set the HWID from Cloudflare
+                key_info["status"] = "activated"
+                key_info["hwid"] = cf_hwid
+                keys_data[key] = key_info
+                storage.data["keys"] = keys_data
+
+                # Update user data as well
+                users_data = storage.data.get("users", {})
+                user_id = str(key_info["user_id"])
+                if user_id in users_data and key in users_data[user_id]["keys"]:
+                    users_data[user_id]["keys"][key]["status"] = "activated"
+                    users_data[user_id]["keys"][key]["hwid"] = cf_hwid
+                    storage.data["users"] = users_data
+                storage.save_sync(storage.data)
+                logger.info(f"Key {key} activated with HWID {cf_hwid} from Cloudflare")
+
         # If key is activated, check HWID match
         if key_info.get("status", "deactivated") == "activated":
             if hwid and key_info.get("hwid", "") != hwid:
@@ -1045,7 +1107,7 @@ def check_key():
                 key_info["status"] = "activated"
                 keys_data[key] = key_info
                 storage.data["keys"] = keys_data
-                
+
                 # Update user data as well
                 users_data = storage.data.get("users", {})
                 user_id = str(key_info["user_id"])
@@ -1065,7 +1127,7 @@ def check_key():
 
         # Get current status (might have been updated above)
         current_status = key_info.get("status", "deactivated")
-        
+
         resp = {
             "valid": True,
             "key_id": key_info.get("key_id", key),
@@ -1208,8 +1270,8 @@ def get_stats():
     })
 
 def run_web():
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    port = int(os.getenv("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
 # Start the web server in a background thread
 web_thread = threading.Thread(target=run_web)
@@ -1962,7 +2024,8 @@ async def delete_all_key(interaction: discord.Interaction, user: discord.User):
 
     except Exception as e:
         logger.error(f"Error in delete_all_key: {e}")
-        embed = create_error_embed("Error", "An error occurred while deleting all keys.")
+        embed```python
+ = create_error_embed("Error", "An error occurred while deleting all keys.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="debug", description="Debug the key system (Owner only)")
@@ -2270,6 +2333,20 @@ async def bulk_operations(interaction: discord.Interaction, action: str, key_typ
     except Exception as e:
         logger.error(f"Error in bulk_operations: {e}")
         await interaction.response.send_message(f"Error in bulk operations: {e}", ephemeral=True)
+
+@bot.tree.command(name="view_key", description="View your license key details")
+async def view_key(interaction: discord.Interaction):
+    try:
+        user_keys = await KeyManager.get_user_keys(interaction.user.id)
+        if not user_keys:
+            embed = create_error_embed("No Keys Found", "You don't have any license keys.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        for key in user_keys:
+            if not key.is_expired():
+                # Sync with Cloudflare before showing
+                await sync_key_with_cloudflare(key.key_id)
 
 # Run the bot
 if __name__ == "__main__":
