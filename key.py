@@ -37,7 +37,7 @@ def sync_key_with_cloudflare(key):
         asyncio.set_event_loop(loop)
         cf_data = loop.run_until_complete(get_key_info(key))
         loop.close()
-        
+
         if "error" not in cf_data:
             # Update local storage with Cloudflare data
             storage_data = storage.data.get("keys", {})
@@ -1083,7 +1083,7 @@ def check_key():
             asyncio.set_event_loop(loop)
             cf_data = loop.run_until_complete(get_key_info(key))
             loop.close()
-            
+
             if "error" not in cf_data:
                 cf_status = cf_data.get("status", "").lower()
                 cf_hwid = cf_data.get("hwid", "")
@@ -1354,7 +1354,7 @@ async def help_command(interaction: discord.Interaction):
             embed.add_field(
                 name="\U0001F527 Manager Commands",
                 value=(
-                    "`/create_key` - Create a new GAG/ASTD/ALS license key\n"
+                    "`/create_key` - Create a new GAG/ASTD/ALS license keyn"
                     "`/check_license` - Check license status by HWID or user\n"
                     "`/delete_key` - Delete a license key\n"
                     "`/list_keys` - List all license keys (GAG, ASTD, ALS) with pagination\n"
@@ -2028,7 +2028,7 @@ async def setup_key_message(
 @bot.tree.command(name="delete_all_key", description="Delete all keys for a user")
 @app_commands.describe(user="User to delete all keys for")
 async def delete_all_key(interaction: discord.Interaction, user: discord.User):
-    try:
+    try:```python
         # Allow owners, managers, and exclusive users to delete all keys
         if not (is_owner(interaction) or await has_manager_role(interaction) or await has_exclusive_role(interaction)):
             embed = create_error_embed("Permission Denied", "You don't have permission to delete all keys.")
@@ -2404,19 +2404,46 @@ async def view_key(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Auto-sync functionality
-CLOUDFLARE_LIST_URL = "https://key-checker.yunoblasesh.workers.dev/list?token=secret"
+CLOUDFLARE_SYNC_URL = "https://key-checker.yunoblasesh.workers.dev/sync?token=secretkey123"
 
 async def sync_keys():
     """Automatically sync keys from Cloudflare every 60 seconds"""
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
-            response = requests.get(CLOUDFLARE_LIST_URL)
-            if response.status_code == 200:
-                bot.key_data = response.json()  # store in bot object
-                logger.info("[SYNC] Keys updated from Cloudflare.")
-            else:
-                logger.warning(f"[SYNC] Failed to fetch keys: HTTP {response.status_code}")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(CLOUDFLARE_SYNC_URL) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        # Extract keys array from response
+                        cf_keys = data.get("keys", [])
+
+                        # Update local storage with Cloudflare data
+                        local_keys = storage.data.get("keys", {})
+                        updated_count = 0
+
+                        for cf_key in cf_keys:
+                            key_id = cf_key.get("key")
+                            if key_id and key_id in local_keys:
+                                local_key = local_keys[key_id]
+                                # Update status from Cloudflare
+                                cf_status = cf_key.get("status", "").lower()
+                                if cf_status == "active" and local_key.get("status") != "activated":
+                                    local_key["status"] = "activated"
+                                    local_key["hwid"] = cf_key.get("hwid", "")
+                                    updated_count += 1
+                                elif cf_status == "inactive" and local_key.get("status") != "deactivated":
+                                    local_key["status"] = "deactivated"
+                                    updated_count += 1
+
+                        if updated_count > 0:
+                            storage.data["keys"] = local_keys
+                            storage.save_sync(storage.data)
+                            logger.info(f"[SYNC] Updated {updated_count} keys from Cloudflare.")
+                        else:
+                            logger.info("[SYNC] All keys are already in sync.")
+                    else:
+                        logger.warning(f"[SYNC] Failed to fetch keys: HTTP {response.status}")
         except Exception as e:
             logger.error(f"[SYNC ERROR] Sync failed: {e}")
         await asyncio.sleep(60)  # sync every 60 seconds
