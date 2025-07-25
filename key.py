@@ -29,25 +29,30 @@ async def get_key_info(key):
     except Exception as e:
         return {"error": str(e)}
 
-async def sync_key_with_cloudflare(key):
+def sync_key_with_cloudflare(key):
     """Sync local key data with Cloudflare KV data"""
     try:
-        cf_data = await get_key_info(key)
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        cf_data = loop.run_until_complete(get_key_info(key))
+        loop.close()
+        
         if "error" not in cf_data:
             # Update local storage with Cloudflare data
-            storage_data = await storage.get("keys", {})
+            storage_data = storage.data.get("keys", {})
             if key in storage_data:
                 local_key = storage_data[key]
                 # Sync status and HWID from Cloudflare
-                if cf_data.get("status") == "Active":
+                if cf_data.get("status", "").lower() == "active":
                     local_key["status"] = "activated"
                     local_key["hwid"] = cf_data.get("hwid", "")
-                elif cf_data.get("status") == "Inactive":
+                elif cf_data.get("status", "").lower() == "inactive":
                     local_key["status"] = "deactivated"
-                    local_key["hwid"] = ""
 
                 storage_data[key] = local_key
-                await storage.set("keys", storage_data)
+                storage.data["keys"] = storage_data
+                storage.save_sync(storage.data)
                 return True
     except Exception as e:
         logger.error(f"Error syncing key {key} with Cloudflare: {e}")
@@ -635,7 +640,7 @@ class LicenseBot(discord.Client):
         logger.info("Setting up bot commands...")
         await self.tree.sync()
         logger.info("Commands synced successfully")
-        
+
         # Start the auto-sync task
         self.loop.create_task(sync_keys())
         logger.info("Auto-sync task started")
@@ -686,10 +691,8 @@ class ASTDGenerateKeyButton(discord.ui.Button):
             return
         duration = "1y"
         days = parse_duration(duration)
-        # Generate a computer-based HWID instead of using Discord ID
-        import hashlib
-        computer_hwid = hashlib.sha256(f"computer_{user.id}_{user.name}".encode()).hexdigest()[:16]
-        license_key = await KeyManager.create_key("ASTD", user.id, computer_hwid, days, name="Auto-generated")
+        # Create key without HWID - it will be set when the client activates it
+        license_key = await KeyManager.create_key("ASTD", user.id, "", days, name="Auto-generated")
         expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
         try:
             dm_embed = create_embed(
@@ -826,10 +829,8 @@ class ALSGenerateKeyButton(discord.ui.Button):
             return
         duration = "1y"
         days = parse_duration(duration)
-        # Generate a computer-based HWID instead of using Discord ID
-        import hashlib
-        computer_hwid = hashlib.sha256(f"computer_{user.id}_{user.name}".encode()).hexdigest()[:16]
-        license_key = await KeyManager.create_key("ALS", user.id, computer_hwid, days, name="Auto-generated")
+        # Create key without HWID - it will be set when the client activates it
+        license_key = await KeyManager.create_key("ALS", user.id, "", days, name="Auto-generated")
         expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
         try:
             dm_embed = create_embed(
@@ -958,10 +959,8 @@ class GAGGenerateKeyButton(discord.ui.Button):
             return
         duration = "1y"
         days = parse_duration(duration)
-        # Generate a computer-based HWID instead of using Discord ID
-        import hashlib
-        computer_hwid = hashlib.sha256(f"computer_{user.id}_{user.name}".encode()).hexdigest()[:16]
-        license_key = await KeyManager.create_key("GAG", user.id, computer_hwid, days, name="Auto-generated")
+        # Create key without HWID - it will be set when the client activates it
+        license_key = await KeyManager.create_key("GAG", user.id, "", days, name="Auto-generated")
         expires_str = "Never" if days == 0 else license_key.expires_at.strftime('%Y-%m-%d %H:%M:%S')
         try:
             dm_embed = create_embed(
@@ -1077,48 +1076,72 @@ def check_key():
         except Exception:
             return jsonify({"valid": False, "message": "Invalid key data"})
 
-        # Check Cloudflare for key usage status and update accordingly
-        cloudflare_info = get_key_info(key)
-        if "error" not in cloudflare_info:
-            cf_status = cloudflare_info.get("status", "").lower()
-            cf_hwid = cloudflare_info.get("hwid", "")
+        # Always sync with Cloudflare first
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            cf_data = loop.run_until_complete(get_key_info(key))
+            loop.close()
+            
+            if "error" not in cf_data:
+                cf_status = cf_data.get("status", "").lower()
+                cf_hwid = cf_data.get("hwid", "")
 
-            # If Cloudflare shows the key as active and has an HWID, update our local data
-            if cf_status == "active" and cf_hwid:
-                # Update the key status to activated and set the HWID from Cloudflare
-                key_info["status"] = "activated"
-                key_info["hwid"] = cf_hwid
-                keys_data[key] = key_info
-                storage.data["keys"] = keys_data
+                # Update local data with Cloudflare data
+                if cf_status == "active" and cf_hwid:
+                    key_info["status"] = "activated"
+                    key_info["hwid"] = cf_hwid
+                    keys_data[key] = key_info
+                    storage.data["keys"] = keys_data
 
-                # Update user data as well
-                users_data = storage.data.get("users", {})
-                user_id = str(key_info["user_id"])
-                if user_id in users_data and key in users_data[user_id]["keys"]:
-                    users_data[user_id]["keys"][key]["status"] = "activated"
-                    users_data[user_id]["keys"][key]["hwid"] = cf_hwid
-                    storage.data["users"] = users_data
-                storage.save_sync(storage.data)
-                logger.info(f"Key {key} activated with HWID {cf_hwid} from Cloudflare")
+                    # Update user data as well
+                    users_data = storage.data.get("users", {})
+                    user_id = str(key_info["user_id"])
+                    if user_id in users_data:
+                        if "keys" not in users_data[user_id]:
+                            users_data[user_id]["keys"] = {}
+                        users_data[user_id]["keys"][key] = {
+                            "status": "activated",
+                            "hwid": cf_hwid,
+                            "key_type": key_info["key_type"],
+                            "expires_at": key_info["expires_at"]
+                        }
+                        storage.data["users"] = users_data
+                    storage.save_sync(storage.data)
+                    logger.info(f"Key {key} synced from Cloudflare: status={cf_status}, hwid={cf_hwid}")
+        except Exception as e:
+            logger.error(f"Error syncing with Cloudflare: {e}")
+
+        # If key has no HWID and client provides one, activate it
+        if not key_info.get("hwid") and hwid:
+            key_info["status"] = "activated"
+            key_info["hwid"] = hwid
+            keys_data[key] = key_info
+            storage.data["keys"] = keys_data
+
+            # Update user data
+            users_data = storage.data.get("users", {})
+            user_id = str(key_info["user_id"])
+            if user_id in users_data:
+                if "keys" not in users_data[user_id]:
+                    users_data[user_id]["keys"] = {}
+                users_data[user_id]["keys"][key] = {
+                    "status": "activated",
+                    "hwid": hwid,
+                    "key_type": key_info["key_type"],
+                    "expires_at": key_info["expires_at"]
+                }
+                if hwid not in users_data[user_id].get("hwids", []):
+                    users_data[user_id].setdefault("hwids", []).append(hwid)
+                storage.data["users"] = users_data
+            storage.save_sync(storage.data)
+            logger.info(f"Key {key} activated with HWID {hwid}")
 
         # If key is activated, check HWID match
-        if key_info.get("status", "deactivated") == "activated":
+        elif key_info.get("status", "deactivated") == "activated":
             if hwid and key_info.get("hwid", "") != hwid:
                 return jsonify({"valid": False, "message": "Key is registered to another computer"})
-        else:
-            # If key is not activated and HWID matches, activate it
-            if hwid and key_info.get("hwid", "") == hwid:
-                key_info["status"] = "activated"
-                keys_data[key] = key_info
-                storage.data["keys"] = keys_data
-
-                # Update user data as well
-                users_data = storage.data.get("users", {})
-                user_id = str(key_info["user_id"])
-                if user_id in users_data and key in users_data[user_id]["keys"]:
-                    users_data[user_id]["keys"][key]["status"] = "activated"
-                    storage.data["users"] = users_data
-                storage.save_sync(storage.data)
 
         try:
             if expires_at.year >= 9999:
@@ -1129,16 +1152,13 @@ def check_key():
         except Exception:
             days_left = None
 
-        # Get current status (might have been updated above)
-        current_status = key_info.get("status", "deactivated")
-
         resp = {
             "valid": True,
             "key_id": key_info.get("key_id", key),
             "key_type": key_info.get("key_type", ""),
             "user_id": key_info.get("user_id", ""),
             "hwid": key_info.get("hwid", ""),
-            "status": current_status,
+            "status": key_info.get("status", "deactivated"),
             "expires_at": key_info.get("expires_at", ""),
             "created_at": key_info.get("created_at", ""),
             "name": key_info.get("name", ""),
