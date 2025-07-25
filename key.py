@@ -792,17 +792,17 @@ class ASTDViewKeyButton(discord.ui.Button):
             return
         key = matching_keys[0]
         
-        # Sync with Cloudflare to get the latest data
+        # Sync with Cloudflare before displaying
         sync_key_with_cloudflare(key.key_id)
-        
-        # Reload the key data after sync
-        updated_key = await KeyManager.get_key(key.key_id)
-        if updated_key:
-            key = updated_key
+        # Refresh key data after sync
+        user_keys = await KeyManager.get_user_keys(user.id)
+        matching_keys = [k for k in user_keys if k.key_type == "ASTD"]
+        if matching_keys:
+            key = matching_keys[0]
         
         status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
-        hwid = key.hwid if key.hwid else "Not set"
+        hwid = key.hwid
         resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your ASTD License Key",
@@ -930,18 +930,9 @@ class ALSViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have an ALS key.", ephemeral=True)
             return
         key = matching_keys[0]
-        
-        # Sync with Cloudflare to get the latest data
-        sync_key_with_cloudflare(key.key_id)
-        
-        # Reload the key data after sync
-        updated_key = await KeyManager.get_key(key.key_id)
-        if updated_key:
-            key = updated_key
-        
         status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
-        hwid = key.hwid if key.hwid else "Not set"
+        hwid = key.hwid
         resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your ALS License Key",
@@ -1069,18 +1060,9 @@ class GAGViewKeyButton(discord.ui.Button):
             await interaction.response.send_message("You don't have a GAG key.", ephemeral=True)
             return
         key = matching_keys[0]
-        
-        # Sync with Cloudflare to get the latest data
-        sync_key_with_cloudflare(key.key_id)
-        
-        # Reload the key data after sync
-        updated_key = await KeyManager.get_key(key.key_id)
-        if updated_key:
-            key = updated_key
-        
         status = "Activated" if key.status == "activated" else ("Expired" if key.is_expired() else "Deactivated")
         days_left = key.days_until_expiry()
-        hwid = key.hwid if key.hwid else "Not set"
+        hwid = key.hwid
         resets_left = "∞" if key.resets_left >= 999999 else key.resets_left
         embed = discord.Embed(
             title="\U0001F511 Your GAG License Key",
@@ -1131,6 +1113,8 @@ def check_key():
                 cf_status = cf_data.get("status", "").lower()
                 cf_hwid = cf_data.get("hwid", "")
 
+                logger.info(f"Cloudflare sync for key {key}: status={cf_status}, hwid={cf_hwid}")
+
                 # Update local data with Cloudflare data - this is the key fix
                 if cf_status == "active":
                     key_info["status"] = "activated"
@@ -1163,36 +1147,16 @@ def check_key():
                     storage.data["keys"] = keys_data
                     storage.save_sync(storage.data)
                     logger.info(f"Key {key} marked as deactivated from Cloudflare")
+            else:
+                logger.warning(f"Error getting key info from Cloudflare: {cf_data.get('error')}")
         except Exception as e:
             logger.error(f"Error syncing with Cloudflare: {e}")
 
-        # If key has no HWID and client provides one, activate it locally too
-        if not key_info.get("hwid") and hwid:
-            key_info["status"] = "activated"
-            key_info["hwid"] = hwid
-            keys_data[key] = key_info
-            storage.data["keys"] = keys_data
-
-            # Update user data
-            users_data = storage.data.get("users", {})
-            user_id = str(key_info["user_id"])
-            if user_id in users_data:
-                if "keys" not in users_data[user_id]:
-                    users_data[user_id]["keys"] = {}
-                users_data[user_id]["keys"][key] = {
-                    "status": "activated",
-                    "hwid": hwid,
-                    "key_type": key_info["key_type"],
-                    "expires_at": key_info["expires_at"]
-                }
-                if hwid not in users_data[user_id].get("hwids", []):
-                    users_data[user_id].setdefault("hwids", []).append(hwid)
-                storage.data["users"] = users_data
-            storage.save_sync(storage.data)
-            logger.info(f"Key {key} activated locally with HWID {hwid}")
+        # Refresh key_info after potential Cloudflare sync
+        key_info = storage.data.get("keys", {}).get(key, key_info)
 
         # If key is activated, check HWID match
-        elif key_info.get("status", "deactivated") == "activated":
+        if key_info.get("status", "deactivated") == "activated":
             if hwid and key_info.get("hwid", "") != hwid:
                 return jsonify({"valid": False, "message": "Key is registered to another computer"})
 
