@@ -2403,7 +2403,7 @@ async def view_key(interaction: discord.Interaction):
         embed = create_error_embed("Error", "An error occurred while viewing your key.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Auto-sync functionality
+# Auto-sync functionality - Updated to work with your Cloudflare Worker
 CLOUDFLARE_SYNC_URL = "https://key-checker.yunoblasesh.workers.dev/sync?token=secretkey123"
 
 async def sync_keys():
@@ -2415,8 +2415,15 @@ async def sync_keys():
                 async with session.get(CLOUDFLARE_SYNC_URL) as response:
                     if response.status == 200:
                         data = await response.json()
-                        # Extract keys array from response
-                        cf_keys = data.get("keys", [])
+                        
+                        # Handle different response formats from your worker
+                        if isinstance(data, dict) and "keys" in data:
+                            cf_keys = data["keys"]
+                        elif isinstance(data, list):
+                            cf_keys = data
+                        else:
+                            logger.warning("[SYNC] Unexpected response format from Cloudflare")
+                            cf_keys = []
 
                         # Update local storage with Cloudflare data
                         local_keys = storage.data.get("keys", {})
@@ -2428,9 +2435,12 @@ async def sync_keys():
                                 local_key = local_keys[key_id]
                                 # Update status from Cloudflare
                                 cf_status = cf_key.get("status", "").lower()
+                                cf_hwid = cf_key.get("hwid", "")
+                                
                                 if cf_status == "active" and local_key.get("status") != "activated":
                                     local_key["status"] = "activated"
-                                    local_key["hwid"] = cf_key.get("hwid", "")
+                                    if cf_hwid:
+                                        local_key["hwid"] = cf_hwid
                                     updated_count += 1
                                 elif cf_status == "inactive" and local_key.get("status") != "deactivated":
                                     local_key["status"] = "deactivated"
@@ -2442,8 +2452,12 @@ async def sync_keys():
                             logger.info(f"[SYNC] Updated {updated_count} keys from Cloudflare.")
                         else:
                             logger.info("[SYNC] All keys are already in sync.")
+                    elif response.status == 401:
+                        logger.warning("[SYNC] Unauthorized - check your admin token")
                     else:
                         logger.warning(f"[SYNC] Failed to fetch keys: HTTP {response.status}")
+        except aiohttp.ClientError as e:
+            logger.error(f"[SYNC ERROR] Network error: {e}")
         except Exception as e:
             logger.error(f"[SYNC ERROR] Sync failed: {e}")
         await asyncio.sleep(60)  # sync every 60 seconds
