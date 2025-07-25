@@ -1344,8 +1344,7 @@ async def help_command(interaction: discord.Interaction):
                     "`/bulk_operations` - Perform bulk operations on keys\n"
                     "`/system_config` - Configure system settings"
                 ),
-                ```text
-inline=False
+                inline=False
             )
 
         # Owner Commands - Show only for Owner
