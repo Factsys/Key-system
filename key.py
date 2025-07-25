@@ -123,6 +123,58 @@ def add_key_to_cloudflare(key: str, duration_days: int = 365):
         logger.error(f"[ERROR] Failed to store key {key} in all {total_urls} Cloudflare endpoints")
         return False
 
+def delete_key_from_cloudflare(key: str):
+    """
+    Deletes/invalidates a key from Cloudflare Worker APIs.
+    """
+    # Cloudflare delete endpoints - modify the URLs to have delete endpoints
+    CLOUDFLARE_DELETE_URLS = [
+        "https://key-checker.yunoblasesh.workers.dev/delete?token=secretkey123",
+        "https://factsy.yunoblasesh.workers.dev/delete?token=secretkey123"
+    ]
+    
+    payload = {
+        "key": key
+    }
+
+    success_count = 0
+    total_urls = len(CLOUDFLARE_DELETE_URLS)
+
+    for i, url in enumerate(CLOUDFLARE_DELETE_URLS):
+        try:
+            response = requests.post(url, json=payload, timeout=10)
+            if response.status_code == 200:
+                response_data = response.json()
+                if response_data.get("success"):
+                    logger.info(f"[OK] Key {key} deleted from Cloudflare URL {i+1}/{total_urls}")
+                    success_count += 1
+                else:
+                    logger.error(f"[ERROR] Cloudflare rejected delete request for key {key} at URL {i+1}/{total_urls}: {response_data.get('error', 'Unknown error')}")
+            elif response.status_code == 401:
+                logger.error(f"[ERROR] Unauthorized delete request at URL {i+1}/{total_urls} - check admin token")
+            elif response.status_code == 400:
+                try:
+                    error_data = response.json()
+                    logger.error(f"[ERROR] Bad delete request at URL {i+1}/{total_urls}: {error_data.get('error', response.text)}")
+                except:
+                    logger.error(f"[ERROR] Bad delete request at URL {i+1}/{total_urls}: {response.text}")
+            else:
+                logger.error(f"[ERROR] Failed to delete key {key} at URL {i+1}/{total_urls}. HTTP {response.status_code}: {response.text}")
+        except requests.exceptions.Timeout:
+            logger.error(f"[ERROR] Timeout when deleting key {key} from URL {i+1}/{total_urls}")
+        except requests.exceptions.ConnectionError:
+            logger.error(f"[ERROR] Connection error when deleting key {key} from URL {i+1}/{total_urls}")
+        except Exception as e:
+            logger.error(f"[ERROR] Cloudflare delete request failed for URL {i+1}/{total_urls}: {e}")
+
+    # Consider it successful if at least one URL worked
+    if success_count > 0:
+        logger.info(f"[OK] Key {key} successfully deleted from {success_count}/{total_urls} Cloudflare endpoints")
+        return True
+    else:
+        logger.error(f"[ERROR] Failed to delete key {key} from all {total_urls} Cloudflare endpoints")
+        return False
+
 OWNER_IDS = []
 owner_ids_str = os.getenv("OWNER_ID", "776883692983156736,829256979716898826,1334138321412296725")
 if owner_ids_str:
@@ -383,12 +435,24 @@ class KeyManager:
 
     @staticmethod
     async def delete_key(key_id: str) -> bool:
-        """Delete a license key"""
+        """Delete a license key from local storage and invalidate it in Cloudflare"""
         keys_data = await storage.get("keys", {})
         if key_id in keys_data:
             key_info = keys_data[key_id]
             user_id = str(key_info["user_id"])
 
+            # Delete key from Cloudflare first to invalidate it
+            try:
+                cloudflare_success = delete_key_from_cloudflare(key_id)
+                if cloudflare_success:
+                    logger.info(f"Key {key_id} successfully invalidated in Cloudflare")
+                else:
+                    logger.warning(f"Failed to invalidate key {key_id} in Cloudflare, but proceeding with local deletion")
+            except Exception as e:
+                logger.error(f"Error invalidating key {key_id} in Cloudflare: {e}")
+                # Continue with local deletion even if Cloudflare fails
+
+            # Remove from local storage
             del keys_data[key_id]
             await storage.set("keys", keys_data)
 
@@ -397,7 +461,7 @@ class KeyManager:
                 del users_data[user_id]["keys"][key_id]
                 await storage.set("users", users_data)
 
-            logger.info(f"Deleted key {key_id}")
+            logger.info(f"Key {key_id} deleted from local storage and invalidated in Cloudflare")
             return True
         return False
 
@@ -437,15 +501,28 @@ class KeyManager:
 
     @staticmethod
     async def reset_key(key_id: str, unlimited_resets: bool = False) -> bool:
-        """Reset a license key: delete the key and decrement resets_left for the user/key_type."""
+        """Reset a license key: delete the key from local storage and invalidate it in Cloudflare."""
         keys_data = await storage.get("keys", {})
         if key_id in keys_data:
             key_info = keys_data[key_id]
             user_id = str(key_info["user_id"])
             key_type = key_info["key_type"]
-            # Remove from keys
+            
+            # Delete key from Cloudflare first to invalidate it
+            try:
+                cloudflare_success = delete_key_from_cloudflare(key_id)
+                if cloudflare_success:
+                    logger.info(f"Key {key_id} successfully invalidated in Cloudflare")
+                else:
+                    logger.warning(f"Failed to invalidate key {key_id} in Cloudflare, but proceeding with local deletion")
+            except Exception as e:
+                logger.error(f"Error invalidating key {key_id} in Cloudflare: {e}")
+                # Continue with local deletion even if Cloudflare fails
+            
+            # Remove from local keys storage
             del keys_data[key_id]
             await storage.set("keys", keys_data)
+            
             # Remove from users
             users_data = await storage.get("users", {})
             if user_id in users_data and key_id in users_data[user_id]["keys"]:
@@ -455,6 +532,8 @@ class KeyManager:
                     resets_info = users_data[user_id].setdefault("resets_left", {})
                     resets_info[key_type] = max(0, resets_info.get(key_type, 7) - 1)
                 await storage.set("users", users_data)
+            
+            logger.info(f"Key {key_id} reset: deleted from local storage and invalidated in Cloudflare")
             return True
         return False
 
@@ -2198,19 +2277,49 @@ async def deletekeysystem(interaction: discord.Interaction):
             embed = create_error_embed("Permission Denied", "Only the bot owner can wipe the key system database.")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-        # Wipe all key system data
+        
+        # First invalidate all keys in Cloudflare
+        keys_data = await storage.get("keys", {})
+        invalidated_count = 0
+        total_keys = len(keys_data)
+        
+        if total_keys > 0:
+            await interaction.response.send_message("🔄 Invalidating all keys in Cloudflare, please wait...", ephemeral=True)
+            
+            for key_id in keys_data.keys():
+                try:
+                    if delete_key_from_cloudflare(key_id):
+                        invalidated_count += 1
+                except Exception as e:
+                    logger.error(f"Error invalidating key {key_id} in Cloudflare: {e}")
+            
+            logger.info(f"Invalidated {invalidated_count}/{total_keys} keys in Cloudflare before system wipe")
+        
+        # Then wipe all local key system data
         storage.data["keys"] = {}
         storage.data["users"] = {}
         storage.save_sync(storage.data)
+        
         embed = create_embed(
             "⚠️ Key System Deleted",
-            "All license keys and user data have been deleted from the database. This action cannot be undone!"
+            f"All license keys and user data have been deleted from the database.\n"
+            f"**Cloudflare Keys Invalidated:** {invalidated_count}/{total_keys}\n"
+            f"**Note:** This action cannot be undone!"
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        
+        # Send follow-up message since we already responded
+        if total_keys > 0:
+            await interaction.edit_original_response(content=None, embed=embed)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            
     except Exception as e:
         logger.error(f"Error in deletekeysystem: {e}")
         embed = create_error_embed("Error", "An error occurred while deleting the key system.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=None, embed=embed)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # New enhanced commands for better system management
 
@@ -2520,7 +2629,7 @@ if __name__ == "__main__":
         bot.run(TOKEN)
     except discord.LoginFailure:
         logger.error("Invalid Discord bot token. Please check your TOKEN environment variable.")
-        
+
         print("Invalid Discord bot token. Please check your TOKEN environment variable.")
         exit(1)
     except Exception as e:
