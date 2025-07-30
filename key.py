@@ -1482,46 +1482,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>License Bot</title>
-        <style>
-            body { 
-                font-family: Arial, sans-serif; 
-                background: #2c2f33; 
-                color: white; 
-                text-align: center; 
-                padding: 50px; 
-            }
-            .status { 
-                color: #7289da; 
-                font-size: 24px; 
-                margin: 20px 0; 
-            }
-            .info { 
-                background: #36393f; 
-                padding: 20px; 
-                border-radius: 8px; 
-                margin: 20px auto; 
-                max-width: 600px; 
-            }
-        </style>
-    </head>
-    <body>
-        <h1>🤖 License Bot</h1>
-        <div class="status">✅ Bot is running!</div>
-        <div class="info">
-            <h3>Available Endpoints:</h3>
-            <p><strong>/check</strong> - Check license key status</p>
-            <p><strong>/activate</strong> - Activate a license key</p>
-            <p><strong>/stats</strong> - View system statistics</p>
-            <p><strong>/health</strong> - System health check</p>
-        </div>
-    </body>
-    </html>
-    """
+    return "Bot is running!"
 
 
 @app.route("/check", methods=["POST"])
