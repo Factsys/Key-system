@@ -840,8 +840,18 @@ class LicenseBot(discord.Client):
     async def setup_hook(self):
         """Setup and sync commands"""
         logger.info("Setting up bot commands...")
+        
+        # Add persistent views to ensure buttons work after restart
+        self.add_view(ASTDPanelView())
+        self.add_view(ALSPanelView())
+        self.add_view(GAGPanelView())
+        self.add_view(ASTDOptionsView())
+        self.add_view(ALSOptionsView())
+        self.add_view(GAGOptionsView())
+        
         await self.tree.sync()
         logger.info("Commands synced successfully")
+        logger.info("Persistent views added for button functionality")
 
         # Auto-sync disabled - no /list endpoint available
         # self.loop.create_task(sync_keys())
@@ -851,6 +861,15 @@ class LicenseBot(discord.Client):
         if self.user:
             logger.info(f'Bot logged in as {self.user} (ID: {self.user.id})')
         logger.info(f'Connected to {len(self.guilds)} guilds')
+        
+        # Set bot status to show it's online
+        await self.change_presence(
+            status=discord.Status.online,
+            activity=discord.Activity(
+                type=discord.ActivityType.watching,
+                name="License Keys | /help"
+            )
+        )
 
     async def on_error(self, event, *args, **kwargs):
         logger.error(f'Error in {event}: {args}', exc_info=True)
@@ -1483,6 +1502,22 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return "Bot is running!"
+
+@app.route("/bot_status", methods=["GET"])
+def bot_status():
+    """Check if Discord bot is online and connected"""
+    try:
+        if bot.is_ready():
+            return jsonify({
+                "status": "online",
+                "bot_id": bot.user.id if bot.user else None,
+                "guild_count": len(bot.guilds),
+                "latency": round(bot.latency * 1000, 2)
+            })
+        else:
+            return jsonify({"status": "offline"}), 503
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/check", methods=["POST"])
